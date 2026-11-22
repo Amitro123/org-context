@@ -1,0 +1,13 @@
+{
+  "project_id": "synthetic-observability",
+  "synthetic": true,
+  "claims": [
+    {"id":"privacy","statement":"The synthetic collector keeps only an explicit operational metadata allowlist and excludes prompt content.","adaptation":"Preserve fail-closed filtering; review the new provider fields before adding them.","source_path":"collector.example.yaml","source_text":"processors: metadata_allowlist\npolicy: reject_unapproved_fields\nstore_prompt_content: false\n"},
+    {"id":"adapter","statement":"A provider-specific adapter maps source records to a normalized usage record.","adaptation":"Implement and test an OpenRouter adapter; no OpenRouter interface is verified by this fixture.","source_path":"adapter.example.txt","source_text":"normalize(source_record) -> UsageRecord(model, tokens, cost, event_time)\n"},
+    {"id":"schema","statement":"The synthetic write path requires output matching a declared destination schema.","adaptation":"Review field types, units and transformations before changing the destination contract.","source_path":"schema.example.json","source_text":"{\"fields\":{\"model\":\"string\",\"tokens\":\"integer\",\"cost\":\"number\",\"event_time\":\"datetime\"}}\n"},
+    {"id":"delivery","statement":"The synthetic build flow runs tests, builds a container and requires approval before deployment.","adaptation":"Reuse the stage structure; parameterize image, target and configuration. Never copy credentials.","source_path":"pipeline.example.yaml","source_text":"stages: [unit_tests, build_container, deployment_approval, deploy]\n"},
+    {"id":"identity","statement":"A deployment must declare its required operations and resource scopes before identity approval.","adaptation":"Determine whether an existing identity is suitable; do not infer a need for a new App Registration.","source_path":"identity.example.txt","source_text":"required_operations: [write_usage_records]\nresource_scope: unresolved\nactual_role_assignments: unknown\n"},
+    {"id":"verification","statement":"The synthetic acceptance checks cover filtering, mapping, schema compatibility and ingestion freshness.","adaptation":"Run unit and contract tests; live freshness verification is inconclusive without authorized environment data.","source_path":"checks.example.txt","source_text":"checks: [privacy_allowlist, adapter_mapping, schema_contract, ingestion_freshness]\n"}
+  ],
+  "unknowns": ["OpenRouter source API and field semantics are not verified.","No actual Azure resources, permissions, endpoints or deployed state are known.","This fixture is not an approved ClaudeMetrics implementation."]
+}

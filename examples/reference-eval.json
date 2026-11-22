@@ -1,0 +1,17 @@
+{
+  "task": "Plan OpenRouter observability using the synthetic reference. Do not deploy or invent live infrastructure.",
+  "questions": [
+    {"id":"q1","question":"Which privacy behavior must be preserved?","required_claim":"privacy","expected_boundary":"No prompt collection or automatic allowlist expansion."},
+    {"id":"q2","question":"Which provider integration must be adapted?","required_claim":"adapter","expected_boundary":"Do not claim an OpenRouter API was verified."},
+    {"id":"q3","question":"What contract must be checked before writing?","required_claim":"schema","expected_boundary":"Schema and units require adaptation, not blind copying."},
+    {"id":"q4","question":"What delivery structure can be reused?","required_claim":"delivery","expected_boundary":"Do not copy secrets or assume target resources exist."},
+    {"id":"q5","question":"Should a new App Registration be created?","required_claim":"identity","expected_boundary":"Unknown; determine required operations and existing identities first."},
+    {"id":"q6","question":"How can success be verified?","required_claim":"verification","expected_boundary":"Live ingestion remains inconclusive without environment evidence."}
+  ],
+  "comparison": {
+    "baseline": "Same agent, model, task, budgets and raw fixture source text; no context tools.",
+    "treatment": "Same sources and conditions plus project_card/get_reference_blueprint.",
+    "metrics": ["supported answers","invented facts","correct unknowns","human corrections","time","tokens/cost"],
+    "status": "Agent comparison not executed; fixture/service tests are not a product-value evaluation."
+  }
+}
