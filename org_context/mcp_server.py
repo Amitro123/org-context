@@ -4,6 +4,7 @@ import json
 import sys
 from .inventory_context import Context
 from .evidence_pages import READ_TOOL,read_evidence,add_scan_root
+from .discovery import DISCOVERY_TOOLS,NAMES as DISCOVERY_NAMES,call as discovery_call
 VERSION='2025-03-26'
 MAX_LINE=16384
 HARD_LIMIT=1_048_576
@@ -12,6 +13,7 @@ TOOLS=[{'name':n,'description':d,'inputSchema':PROJECT_SCHEMA} for n,d in (
  ('project_card','Read scanned project evidence, dependencies and coverage, or a synthetic reference card.'),
  ('get_reference_blueprint','Read a synthetic reference; real scanned projects return not_available unless a reference is separately supported.'))]
 TOOLS.append({'name':'find_projects_using','description':'Find declared package dependencies in scanned inventory; not proof of runtime use.','inputSchema':{'type':'object','properties':{'technology':{'type':'string','minLength':1,'maxLength':160},'ecosystem':{'type':'string','enum':['python','npm']}},'required':['technology'],'additionalProperties':False}})
+TOOLS.extend(DISCOVERY_TOOLS)
 
 def error(rid,code,message): return {'jsonrpc':'2.0','id':rid,'error':{'code':code,'message':message}}
 
@@ -46,7 +48,9 @@ class Session:
             if set(params)-{'name','arguments','_meta'} or not isinstance(name,str) or name not in {t['name'] for t in self.tools}: return error(rid,-32602,'Unknown tool or invalid call')
             if not isinstance(arguments,dict): return error(rid,-32602,'arguments must be an object')
             try:
-                result=read_evidence(self.context,arguments) if name=='read_evidence' else self.context.call(name,arguments)
+                if name in DISCOVERY_NAMES: result=discovery_call(self.context,name,arguments)
+                elif name=='read_evidence': result=read_evidence(self.context,arguments)
+                else: result=self.context.call(name,arguments)
                 if name=='project_card': result=add_scan_root(self.context,result)
                 text=json.dumps(result,ensure_ascii=True)
                 if len(text)>200000: raise ValueError('Result too large; narrow inventory')

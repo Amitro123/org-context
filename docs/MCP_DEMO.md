@@ -1,70 +1,70 @@
-# Scanner-backed MCP: setup and Grokbot regression checklist
+# Scanner-backed MCP and multi-project discovery
 
-Run from the updated checkout with Python 3.11+. No Azure access is needed.
+Python 3.11+, local authorized single-user use only. No new dependencies.
 
 ```sh
 python -m unittest discover -s tests -v
-python -m org_context.cli --db inventory.sqlite scan /path/to/claudemod /path/to/claudemod/demo
-python -m org_context.cli --db inventory.sqlite list
+python -m org_context.cli --db inventory.sqlite scan /path/to/repo-a /path/to/repo-b /path/to/repo-b/demo
 python -m org_context.mcp_server --db inventory.sqlite
+# Optional full retained-document paging:
+python -m org_context.mcp_server --db inventory.sqlite --evidence-pages
 ```
 
-Copy project IDs from scan/list. No fixture import is needed. The real project
-root and demo are separate roots; nested package discovery is not implemented.
-Existing DBs work read-only; rescan to populate scan_coverage and new sources.
-The separate synthetic import command in org_context.reference still works;
-never mark real organizational facts synthetic to force them into that importer.
+Five tools are available by default: list_projects, project_card,
+find_projects_using, shared_dependencies and get_reference_blueprint.
+--evidence-pages adds read_evidence as a sixth tool. Restart clients after updating.
+See [evidence paging](EVIDENCE_PAGES.md); its historical three/four-tool counts
+are superseded by the five/six counts here. Existing inventory DBs need no migration
+for discovery; rescan if newer extraction coverage is required.
 
-## Cursor configuration
+## Agent workflow
 
-Replace all absolute paths with actual local values. This is a configuration
-example, not a claim of a tested Cursor/Windows connection:
+1. list_projects({}) discovers full scanned IDs without CLI access. Pages accept
+   offset (0..100000) and limit (1..50, default 20). Follow next_offset.
+2. project_card({project_id: ...}) retrieves sources and scan coverage.
+3. find_projects_using({technology: "pydantic", ecosystem: "python"}) returns
+   declarations with scan_root, commit, scan time, evidence ID, path and hash.
+4. shared_dependencies({}) finds packages declared by >=2 scanned project IDs.
+   Optional ecosystem and project_ids (2..10 distinct IDs) restrict the comparison;
+   offset/limit page package groups. Each group's declarations are capped at 50
+   and explicitly marked if truncated. project_count is distinct scanned IDs,
+   not declarations, names or distinct repositories.
+5. With --evidence-pages, read stored source text by authorized project/evidence IDs.
 
-```json
-{"mcpServers":{"org-context":{"command":"/absolute/path/to/python","args":["-m","org_context.mcp_server","--db","/absolute/path/to/inventory.sqlite"],"env":{"PYTHONUTF8":"1","PYTHONPATH":"/absolute/path/to/org-context"}}}}
-```
+Specification differences (>=2 versus ==2.9, for example) do not establish
+installed-version differences or incompatibility. All queries operate on imported
+snapshots. Missing results do not prove absence outside scan coverage. Synthetic
+reference projects are not included in list_projects; their existing reference
+tools remain usable. Pagination order is deterministic for an unchanged DB;
+a rescan between calls can shift offset pages. Comparison groups and their evidence
+are read within one SQLite read snapshot. Response sizes are bounded, not a
+performance SLA for arbitrary database sizes. This is not enterprise authorization.
+The local client must be authorized for all projects and local paths in the DB.
 
-On Windows use the virtualenv python.exe and JSON-escaped backslashes. The server
-configures stdio as UTF-8 and emits ASCII-escaped JSON so Hebrew round-trips even
-through legacy output encodings. PYTHONUTF8 remains an optional defensive setting.
-No PowerShell execution-policy changes are required by the tool itself.
+## Cursor/Claude Code
 
-## Expected calls
+Keep the existing stdio configuration, pointing --db at inventory.sqlite and
+PYTHONPATH at the checkout. Add --evidence-pages only if reading retained document
+text is approved. PythonUTF8=1 may be retained as a defensive environment setting.
+No machine-specific configuration should be committed. Windows, Cursor and Claude
+Code must be tested separately, not inferred from Linux/SDK tests.
 
-- tools/list exposes project_card, find_projects_using, get_reference_blueprint.
-- project_card(project_id) reads actual scanner evidence and stored coverage.
-- find_projects_using(technology="react", ecosystem="npm") searches declarations.
-- get_reference_blueprint(project_id) returns not_available for a scanned project
-  with no blueprint, not a fabricated adaptation plan.
-- project_card evidence is capped at 20 records and dependencies at 50; flags
-  disclose truncation. Search is capped at 50. Full trusted-local evidence remains
-  accessible through CLI show/export; these are not exposed as shell tools.
+## Grokbot acceptance checklist
 
-## What Grokbot should verify on claudemod
+- Run all tests and record exact commits/dirty states for code and scan targets.
+- Scan the same four approved repositories/root selections as before, no fixtures.
+- Discover all 12 scan roots via list_projects pages without pre-known IDs;
+  use actual counts if source revisions/root selections changed.
+- Confirm duplicate display names retain distinct IDs/roots.
+- Compare pydantic/requests/marked declarations with original source files.
+- Check shared dependencies and specification_count against actual declarations;
+  duplicate scopes must not inflate project_count.
+- Check project_ids and ecosystem filters, group paging and declared-row truncation.
+- Verify scan_root and evidence path/hash on search and comparison results.
+- Test bad parameters, SQL-like literal search, readonly DB and paging opt-in.
+- Confirm five default/six opt-in tools and existing synthetic-reference behavior.
 
-1. Run the whole test suite and report actual totals and failures.
-2. Record the tested org-context commit and claudemod commit/dirty state.
-3. Scan claudemod root and demo without manually authored claims.
-4. Confirm evidence for supported plugin manifests, marketplace and workflows;
-   report actual counts, don't assume nine plugins or five workflows permanently.
-5. Check that coverage contains only this scan's paths/general limitations, not
-   hardcoded OpenRouter/ClaudeMetrics names; CODEOWNERS is text, not resolved ownership.
-6. Find an actual demo dependency through MCP and check evidence path/hash.
-7. Request a real project's blueprint and confirm not_available.
-8. Verify Hebrew via actual stdio; test Windows/Cursor separately if available.
-9. Reject shell/extra-path/SQL arguments and verify DB remains unchanged.
-10. Send a newline-terminated request over 16 KB followed by ping: error then ping
-    response. Unterminated or >1 MB input terminates defensively; no time-based
-    protection against a stalled local client is claimed.
-11. Scan a repository subdirectory and check commit SHA when Git HEAD exists.
-12. Review skipped/unsupported sources and truncation before claiming completeness.
-
-Tool invocation validation errors return isError with guidance; unknown tools,
-malformed envelopes and non-object arguments remain protocol errors. This is a
-synchronous subset of MCP 2025-03-26, not SDK conformance certification or a shared
-server. No HTTP, subscriptions or live Azure integration.
-
-The six synthetic questions in examples/reference-eval.json remain a manual
-product-value experiment, not an executed evaluation. Use equal sources/model/
-budgets with and without tools plus a static-blueprint baseline. Test-suite passes
-do not demonstrate fewer iterations or a valid root-cause diagnosis.
+This increment does NOT add Actions search, dependency-groups, requirements-*.txt,
+workspace discovery, repository_root, best-effort scanning or richer CI parsing.
+Known extraction gaps remain and must be reported in evaluation. The manual
+reference-eval experiment is still not an executed product-value measurement.

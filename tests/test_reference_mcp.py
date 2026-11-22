@@ -53,11 +53,11 @@ class ContextTests(unittest.TestCase):
             r=s.handle(call('project_card',args)); self.assertTrue(r['result']['isError'])
         self.assertEqual(s.handle(call('shell',{}))['error']['code'],-32602)
         self.assertEqual(s.handle(call([],{}))['error']['code'],-32602)
-    def test_lifecycle_and_three_tools(self):
+    def test_lifecycle_and_five_tools(self):
         s=Session(self.context)
         self.assertIn('error',s.handle({'jsonrpc':'2.0','id':2,'method':'tools/list'}))
         s=self.session(); r=s.handle({'jsonrpc':'2.0','id':2,'method':'tools/list'})
-        self.assertEqual({t['name'] for t in r['result']['tools']},{'project_card','get_reference_blueprint','find_projects_using'})
+        self.assertEqual({t['name'] for t in r['result']['tools']},{'project_card','get_reference_blueprint','find_projects_using','list_projects','shared_dependencies'})
     def test_oversized_then_ping(self):
         output=io.StringIO(); data='x'*(MAX_LINE+2)+'\n'+json.dumps({'jsonrpc':'2.0','id':9,'method':'ping'})+'\n'
         serve(self.context,io.StringIO(data),output); rows=[json.loads(x) for x in output.getvalue().splitlines()]
@@ -122,5 +122,14 @@ class ContextTests(unittest.TestCase):
         card=self.context.call('project_card',{'project_id':self.pid})
         self.assertNotIn('.github/workflows/a.yml',{e['path'] for e in card['evidence']})
         self.assertTrue(any(x['reason']=='symlink' for x in card['coverage']['skipped']))
+    def test_discovery_via_mcp(self):
+        s=self.session()
+        result=s.handle(call('list_projects',{}))
+        projects=json.loads(result['result']['content'][0]['text'])['projects']
+        self.assertEqual(projects[0]['project_id'],self.pid)
+        result=s.handle(call('find_projects_using',{'technology':'react','ecosystem':'npm'}))
+        self.assertEqual(json.loads(result['result']['content'][0]['text'])['results'][0]['scan_root'],str(self.repo))
+        result=s.handle(call('shared_dependencies',{}))
+        self.assertEqual(json.loads(result['result']['content'][0]['text'])['groups'],[])
 
 if __name__=='__main__': unittest.main()
