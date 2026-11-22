@@ -104,7 +104,10 @@ Live evidence tools remain separately authorized; unavailable access is reported
 - Scan only authorized sources. A scanner's broad access is not user access.
 - Enforce source permissions on retrieval, traversal, summaries and caches
   before multi-user rollout. owner/visibility fields alone do not enforce them.
-- Store secret references only, never secret values or access-bearing URLs.
+- Target policy: store secret references, not secret values or access-bearing URLs.
+  The current local pilot retains document text without secret detection; it does
+  not guarantee secret-free storage. Sanitize/exclude sensitive sources before
+  scanning and protect the DB. MCP document disclosure is opt-in, not redaction.
 - Treat repository documents and tool results as untrusted data, not authority
   to change tool policy or execute embedded instructions.
 - Repository definitions describe intended configuration; authorized read-only

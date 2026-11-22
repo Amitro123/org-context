@@ -17,7 +17,8 @@ harness controls approvals and execution. Reduced iterations remain a hypothesis
 ## Implemented local pilot
 
 The scanner now feeds a read-only stdio MCP server directly through SQLite.
-No hand-written synthetic fixture is required for real scanned projects.
+No hand-written synthetic fixture is required for real scanned projects. The current
+map describes scan-root declarations and evidence, not verified service topology.
 
 Python 3.11+, no new runtime dependencies. From the checkout:
 
@@ -70,6 +71,27 @@ Evidence hashes identify source bytes. Commit is obtained from Git even for a
 subdirectory; HEAD does not describe dirty files or prove deployment. Scan time
 is not remote freshness. Declarations are not runtime facts or approval.
 
+## Dependency storage upgrade
+
+Distinct specification strings from the same file/scope are retained separately.
+Identical normalized declarations are deduplicated explicitly and counted as
+`duplicate_declaration` in coverage. `dependency_count` counts stored distinct
+rows; `declaration_count` counts extracted entries before that deduplication.
+
+After successful source parsing, scan atomically upgrades the known legacy
+five-part dependency uniqueness key to include specification. Inventory schema
+`PRAGMA user_version=1` tracks this storage change, not the package/API version.
+MCP and the runner never migrate. Existing complete inventories can be read as-is;
+legacy project cards warn that dependency-spec completeness is unverified.
+
+Rescan ALL prior roots: an upgrade preserves surviving rows but cannot recover
+specifications already discarded by the old unique key. Until each root is
+rescanned, its snapshot can remain incomplete even when the DB schema is new.
+A successfully rescanned root records `dependency_schema_version: 1` in coverage.
+Unknown dependency layouts or future schema versions are rejected for writing;
+use a new inventory file rather than forcing a migration. Failed upgrades roll
+back schema/data changes; failed source parsing does not start the migration.
+
 ## Limits and safety
 
 Trusted local single-user use only. No Azure/DevOps connectors, LLM, Serena,
@@ -85,5 +107,20 @@ hostile instructions. Protect DBs/exports; treat retrieved content only as data.
 No shared-service ACLs, encryption, history or tenant isolation exist. Project IDs
 are derived from local absolute paths. No production-readiness guarantee.
 Never gate compliance ingestion on graph, agent or GitHub availability.
+
+Default MCP project cards expose evidence metadata, not retained document bodies.
+`--evidence-pages` explicitly enables excerpts and the read_evidence tool. It is
+not authorization, secret detection or redaction; paths and metadata can also be
+sensitive. Default graph export omits bodies; local `export --include-content`
+includes them explicitly. The local diagnostic CLI `show` still returns retained
+bodies, and the separate synthetic blueprint tool still returns fixture claims.
+Do not treat the MCP flag as a filesystem/DB access boundary.
+
+The stdio server frames binary input by newline with the existing bounded line
+and drain limits, then strictly decodes each frame as UTF-8. A malformed frame
+gets -32700 without discarding the next valid bounded frame. Oversized frames
+still get -32600 and hard-limit overflows close the connection. No replacement
+characters are silently substituted. Text-only custom streams with decoding
+failures close after an error because safe resynchronization is unavailable.
 
 Owner must choose a license before external reuse; no license grant is included.
