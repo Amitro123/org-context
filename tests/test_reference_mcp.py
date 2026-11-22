@@ -70,7 +70,7 @@ class ContextTests(unittest.TestCase):
     def test_utf8_subprocess_and_database_unchanged(self):
         requests=[init(),{'jsonrpc':'2.0','method':'notifications/initialized'},call('project_card',{'project_id':self.pid})]
         before=self.db.read_bytes()
-        p=subprocess.run([sys.executable,'-m','org_context.mcp_server','--db',str(self.db)],cwd=ROOT,input=''.join(json.dumps(r)+'\n' for r in requests).encode('utf-8'),capture_output=True,timeout=10)
+        p=subprocess.run([sys.executable,'-m','org_context.mcp_server','--db',str(self.db),'--evidence-pages'],cwd=ROOT,input=''.join(json.dumps(r)+'\n' for r in requests).encode('utf-8'),capture_output=True,timeout=10)
         self.assertEqual(p.returncode,0,p.stderr)
         rows=[json.loads(x) for x in p.stdout.decode('ascii').splitlines()]
         card=json.loads(rows[-1]['result']['content'][0]['text'])

@@ -29,10 +29,32 @@ def connect(path):
     db.executescript("""
     CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT,root TEXT UNIQUE,commit_sha TEXT,scanned_at TEXT);
     CREATE TABLE IF NOT EXISTS evidence(id TEXT PRIMARY KEY,project_id TEXT REFERENCES projects(id),path TEXT,sha256 TEXT,kind TEXT,method TEXT,content TEXT);
-    CREATE TABLE IF NOT EXISTS dependencies(project_id TEXT REFERENCES projects(id),ecosystem TEXT,name TEXT,specification TEXT,scope TEXT,evidence_id TEXT REFERENCES evidence(id),UNIQUE(project_id,ecosystem,name,scope,evidence_id));
+    CREATE TABLE IF NOT EXISTS dependencies(project_id TEXT REFERENCES projects(id),ecosystem TEXT,name TEXT,specification TEXT,scope TEXT,evidence_id TEXT REFERENCES evidence(id),UNIQUE(project_id,ecosystem,name,scope,evidence_id,specification));
     CREATE TABLE IF NOT EXISTS scan_coverage(project_id TEXT PRIMARY KEY REFERENCES projects(id),payload TEXT NOT NULL);
     """)
     return db
+
+def _migrate_dependency_specs(db):
+    """Upgrade only the known legacy constraint, inside the scan transaction."""
+    version=db.execute('PRAGMA user_version').fetchone()[0]
+    if version>1: raise ValueError('Unsupported inventory schema version')
+    old_key=('project_id','ecosystem','name','scope','evidence_id')
+    new_key=old_key+('specification',)
+    indexes=db.execute('PRAGMA index_list(dependencies)').fetchall()
+    keys={tuple(r[0] for r in db.execute('SELECT name FROM pragma_index_info(?) ORDER BY seqno',(idx[1],)))
+          for idx in indexes if idx[2]}
+    if new_key not in keys or old_key in keys:
+        columns=tuple(r[1] for r in db.execute('PRAGMA table_info(dependencies)'))
+        if keys!={old_key} or len(indexes)!=1 or columns!=('project_id','ecosystem','name','specification','scope','evidence_id'):
+            raise ValueError('Unsupported dependency schema; scan into a new database')
+        db.execute("""CREATE TABLE dependencies_spec_upgrade(
+          project_id TEXT REFERENCES projects(id),ecosystem TEXT,name TEXT,specification TEXT,
+          scope TEXT,evidence_id TEXT REFERENCES evidence(id),
+          UNIQUE(project_id,ecosystem,name,scope,evidence_id,specification))""")
+        db.execute('INSERT INTO dependencies_spec_upgrade SELECT project_id,ecosystem,name,specification,scope,evidence_id FROM dependencies')
+        db.execute('DROP TABLE dependencies')
+        db.execute('ALTER TABLE dependencies_spec_upgrade RENAME TO dependencies')
+    db.execute('PRAGMA user_version=1')
 
 def commit(root):
     try:
@@ -169,15 +191,23 @@ def scan(db,supplied):
         deps.extend((pid,*d,eid) for d in extracted)
         omitted.extend({'path':name,'reason':reason,'count':count} for reason,count in sorted(notes.items()))
         structures.extend({'path':name,**item} for item in found)
-    coverage={'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'omitted_declarations':omitted,'partial_structures':structures,'unsupported':list(UNSUPPORTED),'not_checked':['runtime state','actual permissions','remote freshness']}
+    declaration_count=len(deps)
+    evidence_paths={row[0]:row[2] for row in records}
+    for declaration,count in Counter(deps).items():
+        if count>1:
+            omitted.append({'path':evidence_paths[declaration[-1]],'reason':'duplicate_declaration','count':count-1})
+    deps=list(dict.fromkeys(deps))
+    coverage={'dependency_schema_version':1,'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'omitted_declarations':omitted,'partial_structures':structures,'unsupported':list(UNSUPPORTED),'not_checked':['runtime state','actual permissions','remote freshness']}
     with db:
+        if not db.in_transaction: db.execute('BEGIN')
+        _migrate_dependency_specs(db)
         db.execute('DELETE FROM dependencies WHERE project_id=?',(pid,))
         db.execute('DELETE FROM evidence WHERE project_id=?',(pid,))
         db.execute('INSERT INTO projects VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,commit_sha=excluded.commit_sha,scanned_at=excluded.scanned_at',(pid,root.name,str(root),commit(root),datetime.now(timezone.utc).isoformat()))
         db.executemany('INSERT INTO evidence VALUES(?,?,?,?,?,?,?)',records)
-        db.executemany('INSERT OR IGNORE INTO dependencies VALUES(?,?,?,?,?,?)',deps)
+        db.executemany('INSERT INTO dependencies VALUES(?,?,?,?,?,?)',deps)
         db.execute('INSERT OR REPLACE INTO scan_coverage VALUES(?,?)',(pid,json.dumps(coverage)))
-    return {'project_id':pid,'name':root.name,'evidence_count':len(records),'dependency_count':len(deps),'skipped':skipped,'coverage':coverage}
+    return {'project_id':pid,'name':root.name,'evidence_count':len(records),'dependency_count':len(deps),'declaration_count':declaration_count,'skipped':skipped,'coverage':coverage}
 
 def show(db,value):
     rows=db.execute('SELECT * FROM projects WHERE id=? OR name=?',(value,value)).fetchall()
@@ -186,9 +216,10 @@ def show(db,value):
     for table in ('evidence','dependencies'): result[table]=[dict(r) for r in db.execute('SELECT * FROM '+table+' WHERE project_id=?',(result['id'],))]
     return result
 
-def graph(db):
+def graph(db,*,include_content=False):
     nodes=[{'type':'Project',**dict(r)} for r in db.execute('SELECT * FROM projects ORDER BY id')]; edges=[]; seen=set()
-    for row in db.execute('SELECT * FROM evidence ORDER BY id'):
+    evidence_columns='id,project_id,path,sha256,kind,method'+(',content' if include_content else '')
+    for row in db.execute('SELECT '+evidence_columns+' FROM evidence ORDER BY id'):
         e=dict(row); nodes.append({'type':'Evidence',**e}); edges.append({'source':e['project_id'],'target':e['id'],'type':'HAS_EVIDENCE'})
     for row in db.execute('SELECT * FROM dependencies ORDER BY project_id,ecosystem,name,scope'):
         d=dict(row); tid=d['ecosystem']+':'+d['name']
@@ -202,13 +233,14 @@ def main(argv=None):
     s=sub.add_parser('scan'); s.add_argument('paths',nargs='+')
     sub.add_parser('list'); s=sub.add_parser('show'); s.add_argument('project')
     s=sub.add_parser('search'); s.add_argument('--technology',required=True); s.add_argument('--ecosystem',choices=['python','npm'])
-    sub.add_parser('export'); args=p.parse_args(argv); db=None
+    s=sub.add_parser('export'); s.add_argument('--include-content',action='store_true',help='Include retained source bodies in this local export; may expose sensitive text')
+    args=p.parse_args(argv); db=None
     try:
         db=connect(args.db)
         if args.command=='scan': result=[scan(db,x) for x in args.paths]
         elif args.command=='list': result=[dict(r) for r in db.execute('SELECT * FROM projects ORDER BY name,id')]
         elif args.command=='show': result=show(db,args.project)
-        elif args.command=='export': result=graph(db)
+        elif args.command=='export': result=graph(db,include_content=args.include_content)
         else:
             sql="SELECT p.name AS project_name,p.commit_sha,p.scanned_at,d.* FROM dependencies d JOIN projects p ON p.id=d.project_id WHERE ((d.ecosystem='python' AND d.name=?) OR (d.ecosystem='npm' AND d.name=?))"
             params=[normalize(args.technology),args.technology.lower()]

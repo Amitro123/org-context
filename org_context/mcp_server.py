@@ -20,6 +20,7 @@ def error(rid,code,message): return {'jsonrpc':'2.0','id':rid,'error':{'code':co
 class Session:
     def __init__(self,context,evidence_pages=False):
         self.context=context; self.initialized=False; self.ready=False
+        self.evidence_pages=evidence_pages
         self.tools=TOOLS+([READ_TOOL] if evidence_pages else [])
     def handle(self,req):
         if isinstance(req,list):
@@ -50,7 +51,7 @@ class Session:
             try:
                 if name in DISCOVERY_NAMES: result=discovery_call(self.context,name,arguments)
                 elif name=='read_evidence': result=read_evidence(self.context,arguments)
-                else: result=self.context.call(name,arguments)
+                else: result=self.context.call(name,arguments,include_content=self.evidence_pages)
                 if name=='project_card': result=add_scan_root(self.context,result)
                 text=json.dumps(result,ensure_ascii=True)
                 if len(text)>200000: raise ValueError('Result too large; narrow inventory')
@@ -62,21 +63,30 @@ class Session:
 
 def serve(context,source,sink,evidence_pages=False):
     session=Session(context,evidence_pages=evidence_pages)
+    # Read byte frames before decoding: TextIOWrapper can decode ahead of a newline.
+    source=getattr(source,'buffer',source)
     def send(r):
         if r is not None: sink.write(json.dumps(r,ensure_ascii=True)+'\n'); sink.flush()
     while True:
-        line=source.readline(MAX_LINE+1)
-        if not line: return
-        if len(line)>MAX_LINE:
-            total=len(line)
-            while not line.endswith('\n') and total<=HARD_LIMIT:
-                line=source.readline(MAX_LINE+1)
-                if not line: break
-                total+=len(line)
-            send(error(None,-32600,'Message too large'))
-            if total>HARD_LIMIT or not line.endswith('\n'): return
-            continue
-        try: response=session.handle(json.loads(line))
+        try:
+            line=source.readline(MAX_LINE+1)
+            if not line: return
+            newline=b'\n' if isinstance(line,bytes) else '\n'
+            if len(line)>MAX_LINE:
+                total=len(line)
+                while not line.endswith(newline) and total<=HARD_LIMIT:
+                    line=source.readline(MAX_LINE+1)
+                    if not line: break
+                    total+=len(line)
+                send(error(None,-32600,'Message too large'))
+                if total>HARD_LIMIT or not line.endswith(newline): return
+                continue
+        except UnicodeError:
+            # A text-only custom stream cannot promise frame resynchronization.
+            send(error(None,-32700,'Parse error')); return
+        try:
+            if isinstance(line,bytes): line=line.decode('utf-8',errors='strict')
+            response=session.handle(json.loads(line))
         except (ValueError,UnicodeError,RecursionError): response=error(None,-32700,'Parse error')
         send(response)
 
@@ -84,7 +94,7 @@ def main():
     for stream in (sys.stdin,sys.stdout):
         if hasattr(stream,'reconfigure'): stream.reconfigure(encoding='utf-8',errors='strict')
     p=argparse.ArgumentParser(description=__doc__); p.add_argument('--db',required=True)
-    p.add_argument('--evidence-pages',action='store_true',help='Opt in to bounded stored-document reading; may reveal sensitive retained text')
+    p.add_argument('--evidence-pages',action='store_true',help='Opt in to scanned-evidence excerpts and bounded document paging; may reveal sensitive retained text')
     a=p.parse_args()
     try: context=Context(a.db)
     except Exception: p.exit(2,'Inventory/reference database missing or invalid. Scan or import first.\n')
