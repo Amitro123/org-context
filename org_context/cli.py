@@ -1,5 +1,6 @@
 """Bounded local repository inventory; source content is untrusted data."""
 import argparse
+from collections import Counter
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -10,9 +11,14 @@ import subprocess
 import tomllib
 
 ALLOWED=('README','README.md','README.rst','README.txt','pyproject.toml','requirements.txt','package.json','CLAUDE.md','CODEOWNERS','.github/CODEOWNERS','docs/CODEOWNERS','.claude-plugin/plugin.json','.claude-plugin/marketplace.json')
-PATTERNS=('.github/workflows/*.yml','.github/workflows/*.yaml','plugins/*/.claude-plugin/plugin.json','plugins/*/plugin.json')
+PATTERNS=('requirements-*.txt','.github/workflows/*.yml','.github/workflows/*.yaml','plugins/*/.claude-plugin/plugin.json','plugins/*/plugin.json')
+UNSUPPORTED=('lockfiles','nested package discovery','workspace member discovery','full YAML semantics','CODEOWNERS matching semantics','OpenAPI/IaC analysis','requirements include expansion','environment-marker evaluation','dependency-group include expansion')
 MAX_BYTES=256000
 MAX_FILES=128
+SPEC=re.compile(r'([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,.-]+\])?\s*([<>=!~][A-Za-z0-9.*<>=!~,+ -]+)?')
+
+class SourceFormatError(ValueError):
+    """Safe, content-free error raised for malformed source declarations."""
 
 def digest(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
@@ -36,28 +42,76 @@ def commit(root):
     except (OSError,subprocess.SubprocessError):
         return None
 
-def python_deps(items,scope):
-    for raw in items:
-        if not isinstance(raw,str): raise ValueError('Dependency must be text')
-        value=raw.strip()
-        if any(x in value for x in ('://','@','/','\\')): continue
-        m=re.fullmatch(r'([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,.-]+\])?\s*([<>=!~][A-Za-z0-9.*<>=!~,+ -]+)?',value)
-        if m: yield ('python',re.sub(r'[-_.]+','-',m[1]).lower(),(m[2] or '').strip(),scope)
+def normalize(name):
+    return re.sub(r'[-_.]+','-',name).lower()
+
+def spec_item(raw,scope,notes):
+    if not isinstance(raw,str): raise SourceFormatError('dependency entry is not text')
+    value=raw.strip()
+    if not value or value.startswith('#'): return None
+    if value.startswith('-'): notes['directive']+=1; return None
+    if any(x in value for x in ('://','@','/','\\')): notes['direct_reference']+=1; return None
+    if ';' in value: notes['environment_marker']+=1; return None
+    m=SPEC.fullmatch(value)
+    if not m: notes['unsupported_expression']+=1; return None
+    return ('python',normalize(m[1]),(m[2] or '').strip(),scope)
+
+def is_requirements(name):
+    return name=='requirements.txt' or (name.startswith('requirements-') and name.endswith('.txt') and '/' not in name)
+
+def require_table(value,label):
+    if not isinstance(value,dict): raise SourceFormatError(label+' must be a table/object')
+    return value
+
+def require_list(value,label):
+    if not isinstance(value,list): raise SourceFormatError(label+' must be a list')
+    return value
+
+def parse_with_notes(name,text):
+    notes=Counter(); structures=[]; result=[]
+    if is_requirements(name):
+        scope='runtime' if name=='requirements.txt' else 'requirements:'+name[len('requirements-'):-4]
+        for line in text.splitlines():
+            item=spec_item(re.sub(r'\s+#.*$','',line),scope,notes)
+            if item: result.append(item)
+    elif name=='pyproject.toml':
+        doc=tomllib.loads(text)
+        project=require_table(doc.get('project',{}),'project')
+        for raw in require_list(project.get('dependencies',[]),'project.dependencies'):
+            item=spec_item(raw,'runtime',notes)
+            if item: result.append(item)
+        for group,items in require_table(project.get('optional-dependencies',{}),'optional-dependencies').items():
+            for raw in require_list(items,'optional dependency group'):
+                item=spec_item(raw,'optional:'+group,notes)
+                if item: result.append(item)
+        for group,items in sorted(require_table(doc.get('dependency-groups',{}),'dependency-groups').items()):
+            scope='group:'+normalize(group)
+            for raw in require_list(items,'dependency group'):
+                if isinstance(raw,dict):
+                    if set(raw)=={'include-group'}:
+                        structures.append({'structure':'dependency-group include','group':normalize(group),'reason':'include-group entries are not expanded'})
+                    else: notes['unsupported_expression']+=1
+                    continue
+                item=spec_item(raw,scope,notes)
+                if item: result.append(item)
+        tool=doc.get('tool',{})
+        if isinstance(tool,dict):
+            if isinstance(tool.get('poetry'),dict): structures.append({'structure':'tool.poetry','reason':'Poetry-specific dependency tables are not extracted'})
+            uv=tool.get('uv')
+            if isinstance(uv,dict) and 'workspace' in uv: structures.append({'structure':'uv workspace','reason':'workspace members are not discovered'})
+    elif name=='package.json':
+        doc=json.loads(text)
+        if not isinstance(doc,dict): raise SourceFormatError('package.json must be an object')
+        for scope in ('dependencies','devDependencies','peerDependencies','optionalDependencies'):
+            for package,spec in require_table(doc.get(scope,{}),scope).items():
+                if isinstance(spec,str) and re.fullmatch(r'@?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?',package) and re.fullmatch(r'[A-Za-z0-9.*^~<>=|+ -]{0,160}',spec): result.append(('npm',package.lower(),spec,scope))
+                elif isinstance(spec,str) and ('://' in spec or spec.startswith(('file:','link:','git','github:','workspace:'))): notes['direct_reference']+=1
+                else: notes['unsupported_expression']+=1
+        if 'workspaces' in doc: structures.append({'structure':'npm workspaces','reason':'workspace members are not discovered'})
+    return result,notes,structures
 
 def parse(name,text):
-    if name=='requirements.txt': return list(python_deps(text.splitlines(),'runtime'))
-    if name=='pyproject.toml':
-        project=tomllib.loads(text).get('project',{})
-        result=list(python_deps(project.get('dependencies',[]),'runtime'))
-        for group,items in project.get('optional-dependencies',{}).items(): result.extend(python_deps(items,'optional:'+group))
-        return result
-    if name=='package.json':
-        result=[]; doc=json.loads(text)
-        for scope in ('dependencies','devDependencies','peerDependencies','optionalDependencies'):
-            for package,spec in doc.get(scope,{}).items():
-                if isinstance(spec,str) and re.fullmatch(r'@?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?',package) and re.fullmatch(r'[A-Za-z0-9.*^~<>=|+ -]{0,160}',spec): result.append(('npm',package.lower(),spec,scope))
-        return result
-    return []
+    return parse_with_notes(name,text)[0]
 
 def safe(root,path):
     relative=path.relative_to(root); current=root
@@ -71,7 +125,7 @@ def scan(db,supplied):
     if path.is_symlink(): raise ValueError('Root symlinks are not accepted')
     root=path.resolve(strict=True)
     if not root.is_dir(): raise ValueError('Root must be a directory')
-    pid=digest(str(root)); records=[]; deps=[]; skipped=[]; checked=[]; missing=[]
+    pid=digest(str(root)); records=[]; deps=[]; skipped=[]; checked=[]; missing=[]; omitted=[]; structures=[]
     candidates=[root/n for n in ALLOWED]
     for pattern in PATTERNS:
         for p in root.glob(pattern):
@@ -84,31 +138,38 @@ def scan(db,supplied):
         if not safe(root,source):
             skipped.append({'path':name,'reason':'symlink'}); continue
         if not source.is_file(): missing.append(name); continue
-        with source.open('rb') as f: raw=f.read(MAX_BYTES+1)
-        if len(raw)>MAX_BYTES:
-            skipped.append({'path':name,'reason':'size_limit'}); continue
-        total+=len(raw)
-        if total>2_000_000: raise ValueError('Total scan size exceeded')
-        text=raw.decode('utf-8'); extracted=parse(name,text)
-        sha=hashlib.sha256(raw).hexdigest(); eid=digest(pid+':'+name+':'+sha)
-        content=None; kind='manifest'; method='structured_parser'
-        if name.endswith('/plugin.json') or name.endswith('/marketplace.json'):
-            doc=json.loads(text)
-            if not isinstance(doc,dict): raise ValueError('Plugin manifest must be an object')
-            summary={k:doc[k] for k in ('name','version','description') if isinstance(doc.get(k),str)}
-            if 'plugins' in doc:
-                if not isinstance(doc['plugins'],list): raise ValueError('plugins must be a list')
-                summary['plugin_names']=[x['name'] for x in doc['plugins'] if isinstance(x,dict) and isinstance(x.get('name'),str)]
-            content=json.dumps(summary,ensure_ascii=False); kind='plugin_manifest'
-        elif name.startswith('.github/workflows/'):
-            actions=re.findall(r'^\s*-?\s*uses:\s*([A-Za-z0-9_./@-]+)\s*(?:#.*)?$',text,re.M)
-            content=json.dumps({'declared_action_references':actions,'semantics':'lexical_only; no YAML validation or run-state check'},ensure_ascii=False)
-            kind='workflow'; method='bounded_lexical_extraction'
-        elif name.endswith('CODEOWNERS') or name=='CLAUDE.md' or name.startswith('README'):
-            content=text; kind='unverified_document'; method='reference_text'
+        try:
+            with source.open('rb') as f: raw=f.read(MAX_BYTES+1)
+            if len(raw)>MAX_BYTES:
+                skipped.append({'path':name,'reason':'size_limit'}); continue
+            total+=len(raw)
+            if total>2_000_000: raise ValueError('Total scan size exceeded')
+            text=raw.decode('utf-8'); extracted,notes,found=parse_with_notes(name,text)
+            sha=hashlib.sha256(raw).hexdigest(); eid=digest(pid+':'+name+':'+sha)
+            content=None; kind='manifest'; method='structured_parser'
+            if name.endswith('/plugin.json') or name.endswith('/marketplace.json'):
+                doc=json.loads(text)
+                if not isinstance(doc,dict): raise SourceFormatError('plugin manifest must be an object')
+                summary={k:doc[k] for k in ('name','version','description') if isinstance(doc.get(k),str)}
+                if 'plugins' in doc:
+                    if not isinstance(doc['plugins'],list): raise SourceFormatError('plugins must be a list')
+                    summary['plugin_names']=[x['name'] for x in doc['plugins'] if isinstance(x,dict) and isinstance(x.get('name'),str)]
+                content=json.dumps(summary,ensure_ascii=False); kind='plugin_manifest'
+            elif name.startswith('.github/workflows/'):
+                actions=re.findall(r'^\s*-?\s*uses:\s*([A-Za-z0-9_./@-]+)\s*(?:#.*)?$',text,re.M)
+                content=json.dumps({'declared_action_references':actions,'semantics':'lexical_only; no YAML validation or run-state check'},ensure_ascii=False)
+                kind='workflow'; method='bounded_lexical_extraction'
+            elif name.endswith('CODEOWNERS') or name=='CLAUDE.md' or name.startswith('README'):
+                content=text; kind='unverified_document'; method='reference_text'
+        except SourceFormatError as exc:
+            raise ValueError('Cannot process '+name+': '+str(exc)) from None
+        except (OSError,ValueError,TypeError,AttributeError,KeyError,RecursionError) as exc:
+            raise ValueError('Cannot process '+name+': '+type(exc).__name__) from None
         records.append((eid,pid,name,sha,kind,method,content)); checked.append(name)
         deps.extend((pid,*d,eid) for d in extracted)
-    coverage={'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'unsupported':['lockfiles','nested package discovery','full YAML semantics','CODEOWNERS matching semantics','OpenAPI/IaC analysis'],'not_checked':['runtime state','actual permissions','remote freshness']}
+        omitted.extend({'path':name,'reason':reason,'count':count} for reason,count in sorted(notes.items()))
+        structures.extend({'path':name,**item} for item in found)
+    coverage={'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'omitted_declarations':omitted,'partial_structures':structures,'unsupported':list(UNSUPPORTED),'not_checked':['runtime state','actual permissions','remote freshness']}
     with db:
         db.execute('DELETE FROM dependencies WHERE project_id=?',(pid,))
         db.execute('DELETE FROM evidence WHERE project_id=?',(pid,))
@@ -150,7 +211,7 @@ def main(argv=None):
         elif args.command=='export': result=graph(db)
         else:
             sql="SELECT p.name AS project_name,p.commit_sha,p.scanned_at,d.* FROM dependencies d JOIN projects p ON p.id=d.project_id WHERE ((d.ecosystem='python' AND d.name=?) OR (d.ecosystem='npm' AND d.name=?))"
-            params=[re.sub(r'[-_.]+','-',args.technology.lower()),args.technology.lower()]
+            params=[normalize(args.technology),args.technology.lower()]
             if args.ecosystem: sql+=' AND d.ecosystem=?'; params.append(args.ecosystem)
             result=[dict(r) for r in db.execute(sql+' ORDER BY p.id,d.scope',params)]
         print(json.dumps(result,indent=2,ensure_ascii=True)); return 0

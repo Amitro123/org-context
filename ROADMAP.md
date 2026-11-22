@@ -5,9 +5,11 @@
 Target: organizational context for reference-based development, new integrations
 and evidence-backed investigation/repair. See [Product design](docs/PRODUCT_DESIGN.md).
 
-Current: local explicit-root inventory, SQLite evidence, dependency search and
-JSON graph export with synthetic tests. README references are separated from
-structured declarations. Test presence is not a verified live deployment.
+Current: local explicit-root inventory with SQLite evidence, bounded Python/npm
+declaration extraction with scan coverage, and a read-only stdio MCP: five tools by
+default and six with --evidence-pages. Discovery and comparison operate over scan
+roots, not verified repositories. README references are separated from structured
+declarations. Test presence is not a verified live deployment.
 Everything below is planned unless explicitly marked current.
 
 ## Phase 0 - Establish a trustworthy baseline

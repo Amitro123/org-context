@@ -41,7 +41,8 @@ See [MCP setup and regression checklist](docs/MCP_DEMO.md).
 
 ## Extraction and coverage
 
-- Root README variants, CLAUDE.md, requirements.txt, pyproject.toml and package.json.
+- Root README variants, CLAUDE.md, requirements.txt, root-level requirements-*.txt,
+  pyproject.toml and package.json.
 - CODEOWNERS at root, .github or docs: retained as reference text; ownership
   matching is NOT evaluated.
 - .github/workflows/*.yml and *.yaml: lexical `uses:` references only, not full
@@ -50,12 +51,20 @@ See [MCP setup and regression checklist](docs/MCP_DEMO.md).
   plugins/*/.claude-plugin/plugin.json or plugins/*/plugin.json: selected string
   metadata and marketplace plugin names, not all plugin configuration.
 
-Package extraction supports simple Python/PEP 621 and npm declarations, not
-lockfiles, Poetry-specific tables, requirement includes or environment markers.
-Direct URL/path package specifications are omitted. Nested packages require
-explicit roots; discovery is limited to the patterns above, not arbitrary recursion.
-A snapshot records checked paths, skipped files, absent fixed candidates and
-unsupported analysis. Legacy DBs can be read, but need rescanning for coverage.
+Package extraction supports simple Python/PEP 621, root requirements files,
+PEP 735 `[dependency-groups]` and npm declarations. Requirements-file suffixes are
+recorded as `requirements:<suffix>` and dependency groups as `group:<name>`; neither
+is treated as runtime. Lockfiles and Poetry-specific tables are not extracted.
+A snapshot records omitted declarations by file and reason (directives, direct
+references, environment markers or unsupported expressions) without storing the
+omitted text. It also reports detected structures that are not expanded:
+dependency-group includes, uv/npm workspaces and Poetry tables. Requirement
+includes, environment-marker evaluation and workspace member discovery are not
+implemented; nested packages require explicit roots. Legacy DBs can be read, but
+need rescanning for coverage.
+
+A malformed or unreadable supported file fails that root with a content-free error
+naming the relative path and failure class. The previous snapshot is retained.
 
 Evidence hashes identify source bytes. Commit is obtained from Git even for a
 subdirectory; HEAD does not describe dirty files or prove deployment. Scan time

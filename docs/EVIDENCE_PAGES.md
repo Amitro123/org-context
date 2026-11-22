@@ -2,8 +2,9 @@
 
 This increment adds read_evidence and scan_root metadata, not richer workflow
 parsing, Git repository-root discovery, best-effort scanning or multi-user ACLs.
-The legacy three tools remain the default. Reading more retained document content
-is explicit opt-in because it may expose sensitive text already stored in SQLite.
+The default tool set remains available without paging. Reading more retained
+document content is explicit opt-in because it may expose sensitive text already
+stored in SQLite.
 
 ```sh
 python -m unittest discover -s tests -v
@@ -11,8 +12,9 @@ python -m org_context.mcp_server --db inventory.sqlite --evidence-pages
 ```
 
 For Cursor/Claude Code, append --evidence-pages to the existing server args and
-restart the connection. With the flag tools/list should return FOUR tools.
-Without it the original three remain and read_evidence is unavailable.
+restart the connection. With the flag tools/list should return SIX tools: the five
+default tools plus read_evidence. Without it five tools are listed and read_evidence
+is unavailable.
 
 Get project_id and evidence_id from project_card; call read_evidence with those
 full IDs, offset=0, limit=1500. Continue with next_offset and expected_sha256 set
@@ -34,7 +36,7 @@ Project cards include location.scan_root from the stored snapshot. repository_ro
 remains null: path containment, matching commits or the name demo alone do not
 prove repository membership. Paths may be sensitive local metadata.
 
-Grokbot: run all previous tests; verify three tools by default/four with the flag,
+Grokbot: run all previous tests; verify five tools by default/six with the flag,
 then read and reassemble the real claudemod README beyond 1500 characters. Check
 hashes, Hebrew, EOF, wrong-project IDs, invalid offsets/limits, rescan behavior,
 metadata-only evidence and unchanged DB bytes. Also confirm ordinary project_card
