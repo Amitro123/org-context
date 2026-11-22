@@ -1,4 +1,3 @@
-import hashlib
 import io
 import json
 from pathlib import Path
@@ -7,87 +6,121 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from org_context.reference import Context, load_demo
-from org_context.mcp_server import Session, serve, MAX_LINE
+from org_context.cli import connect,scan,commit
+from org_context.inventory_context import Context
+from org_context.reference import load_demo
+from org_context.mcp_server import Session,serve,MAX_LINE,HARD_LIMIT
 
 ROOT=Path(__file__).resolve().parents[1]
-FIXTURE=ROOT/"examples/observability-reference.json"
+def init(): return {'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'test','version':'1'}}}
+def call(name,args,rid=3): return {'jsonrpc':'2.0','id':rid,'method':'tools/call','params':{'name':name,'arguments':args}}
 
-def init():
-    return {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}
-
-class ReferenceTests(unittest.TestCase):
+class ContextTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
-        self.db=Path(self.tmp.name)/"ref.sqlite"
-        load_demo(self.db,FIXTURE)
-        self.context=Context(self.db); self.addCleanup(self.context.close)
-
-    def test_card_and_unknown(self):
-        self.assertEqual(len(self.context.call("project_card",{"project_id":"synthetic-observability"})["available_claims"]),6)
-        self.assertEqual(self.context.call("project_card",{"project_id":"missing"})["status"],"not_found")
-
-    def test_evidence_and_eval_coverage(self):
-        result=self.context.call("get_reference_blueprint",{"project_id":"synthetic-observability"})
-        claims={c["id"]:c for c in result["claims"]}
-        for c in claims.values():
-            self.assertEqual(c["source_sha256"],hashlib.sha256(c["source_text"].encode()).hexdigest())
-            self.assertEqual(c["support_status"],"synthetic_fixture_assertion")
-        questions=json.loads((ROOT/"examples/reference-eval.json").read_text())["questions"]
-        self.assertEqual(len(questions),6)
-        self.assertTrue(all(q["required_claim"] in claims for q in questions))
-        self.assertIsNone(result["snapshot"]["commit"])
-        self.assertEqual(len(result["unknowns"]),3)
-
-    def test_read_only(self):
-        with self.assertRaises(sqlite3.OperationalError):
-            self.context.db.execute("DELETE FROM reference_claims")
-
-    def test_no_arbitrary_arguments(self):
-        for tool,args in [("shell",{}),("project_card",{"project_id":"../secret"}),("project_card",{"project_id":"ok","path":"/tmp"})]:
-            with self.assertRaises(ValueError): self.context.call(tool,args)
-
-    def test_reimport_idempotent(self):
-        load_demo(self.db,FIXTURE)
-        self.assertEqual(self.context.db.execute("SELECT count(*) FROM reference_claims").fetchone()[0],6)
-
-    def test_invalid_import_preserves_snapshot(self):
-        bad=Path(self.tmp.name)/"bad.json"; bad.write_text('{"synthetic":false}')
-        with self.assertRaises(ValueError): load_demo(self.db,bad)
-        self.assertEqual(self.context.db.execute("SELECT count(*) FROM reference_claims").fetchone()[0],6)
-
-    def test_lifecycle_and_tools(self):
+        temp=tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root=Path(temp.name); self.repo=self.root/'project'; self.repo.mkdir(); self.db=self.root/'inventory.sqlite'
+        self.write('README.md','מידע לפרויקט'); self.write('package.json','{"dependencies":{"react":"^19"}}')
+        self.write('.github/workflows/check.yml','jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v4\n')
+        self.write('.claude-plugin/marketplace.json','{"name":"market","plugins":[{"name":"sample"}]}')
+        self.write('plugins/sample/.claude-plugin/plugin.json','{"name":"sample","version":"1"}')
+        self.write('CLAUDE.md','Untrusted repository instructions'); self.write('.github/CODEOWNERS','* @example/team')
+        db=connect(self.db)
+        try: self.result=scan(db,self.repo)
+        finally: db.close()
+        self.pid=self.result['project_id']; self.context=Context(self.db); self.addCleanup(self.context.close)
+    def write(self,name,text):
+        p=self.repo/name; p.parent.mkdir(parents=True,exist_ok=True); p.write_text(text,encoding='utf-8')
+    def session(self):
+        s=Session(self.context); s.handle(init()); s.handle({'jsonrpc':'2.0','method':'notifications/initialized'}); return s
+    def test_real_card_and_dynamic_coverage(self):
+        card=self.context.call('project_card',{'project_id':self.pid})
+        self.assertFalse(card['synthetic']); self.assertEqual(card['status'],'ok')
+        self.assertIn('.github/workflows/check.yml',card['coverage']['checked'])
+        self.assertNotIn('OpenRouter',json.dumps(card)); self.assertNotIn('ClaudeMetrics',json.dumps(card))
+        self.assertIn('plugins/sample/.claude-plugin/plugin.json',{e['path'] for e in card['evidence']})
+    def test_search_evidence(self):
+        r=self.context.call('find_projects_using',{'technology':'react','ecosystem':'npm'})
+        self.assertEqual(r['results'][0]['project_id'],self.pid)
+        self.assertEqual(r['results'][0]['path'],'package.json')
+        self.assertEqual(len(r['results'][0]['sha256']),64)
+    def test_no_fabricated_blueprint(self):
+        self.assertEqual(self.context.call('get_reference_blueprint',{'project_id':self.pid})['status'],'not_available')
+    def test_readonly(self):
+        with self.assertRaises(sqlite3.OperationalError): self.context.db.execute('DELETE FROM projects')
+    def test_invalid_inputs(self):
+        s=self.session()
+        for args in ({'project_id':'../private'},{'project_id':self.pid,'sql':'DROP TABLE projects'}):
+            r=s.handle(call('project_card',args)); self.assertTrue(r['result']['isError'])
+        self.assertEqual(s.handle(call('shell',{}))['error']['code'],-32602)
+        self.assertEqual(s.handle(call([],{}))['error']['code'],-32602)
+    def test_lifecycle_and_three_tools(self):
         s=Session(self.context)
-        self.assertIn("error",s.handle({"jsonrpc":"2.0","id":2,"method":"tools/list"}))
-        self.assertEqual(s.handle(init())["result"]["protocolVersion"],"2025-03-26")
-        self.assertIsNone(s.handle({"jsonrpc":"2.0","method":"notifications/initialized"}))
-        self.assertEqual(len(s.handle({"jsonrpc":"2.0","id":3,"method":"tools/list"})["result"]["tools"]),2)
-
-    def test_bad_json_and_size(self):
-        out=io.StringIO(); serve(self.context,io.StringIO('bad\n'),out)
-        self.assertEqual(json.loads(out.getvalue())["error"]["code"],-32700)
-        out=io.StringIO(); serve(self.context,io.StringIO('x'*(MAX_LINE+1)),out)
-        self.assertEqual(json.loads(out.getvalue())["error"]["message"],"Message too large")
-
-    def test_batch_and_notifications(self):
-        s=Session(self.context)
-        self.assertEqual(len(s.handle([{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/cancelled"}])),1)
-        self.assertIn("error",s.handle([]))
-
-    def test_stdio_process(self):
-        requests=[init(),{"jsonrpc":"2.0","method":"notifications/initialized"},
-          {"jsonrpc":"2.0","id":2,"method":"tools/list"},
-          {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"project_card","arguments":{"project_id":"synthetic-observability"}}},
-          {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_reference_blueprint","arguments":{"project_id":"synthetic-observability"}}},
-          {"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"project_card","arguments":{"project_id":"x","path":"/etc/passwd"}}}]
+        self.assertIn('error',s.handle({'jsonrpc':'2.0','id':2,'method':'tools/list'}))
+        s=self.session(); r=s.handle({'jsonrpc':'2.0','id':2,'method':'tools/list'})
+        self.assertEqual({t['name'] for t in r['result']['tools']},{'project_card','get_reference_blueprint','find_projects_using'})
+    def test_oversized_then_ping(self):
+        output=io.StringIO(); data='x'*(MAX_LINE+2)+'\n'+json.dumps({'jsonrpc':'2.0','id':9,'method':'ping'})+'\n'
+        serve(self.context,io.StringIO(data),output); rows=[json.loads(x) for x in output.getvalue().splitlines()]
+        self.assertEqual(rows[0]['error']['message'],'Message too large'); self.assertEqual(rows[1]['id'],9)
+    def test_hard_limit_and_bad_json(self):
+        output=io.StringIO(); serve(self.context,io.StringIO('x'*(HARD_LIMIT+100)),output)
+        self.assertEqual(len(output.getvalue().splitlines()),1)
+        output=io.StringIO(); serve(self.context,io.StringIO('bad\n'),output)
+        self.assertEqual(json.loads(output.getvalue())['error']['code'],-32700)
+    def test_utf8_subprocess_and_database_unchanged(self):
+        requests=[init(),{'jsonrpc':'2.0','method':'notifications/initialized'},call('project_card',{'project_id':self.pid})]
         before=self.db.read_bytes()
-        run=subprocess.run([sys.executable,"-m","org_context.mcp_server","--db",str(self.db)],cwd=ROOT,input=''.join(json.dumps(r)+'\n' for r in requests),capture_output=True,text=True,timeout=10)
-        self.assertEqual(run.returncode,0,run.stderr)
-        responses=[json.loads(line) for line in run.stdout.splitlines()]
-        self.assertEqual(len(responses),5)
-        bundle=json.loads(responses[3]["result"]["content"][0]["text"])
-        self.assertEqual(len(bundle["claims"]),6)
-        self.assertEqual(responses[4]["error"]["code"],-32602)
+        p=subprocess.run([sys.executable,'-m','org_context.mcp_server','--db',str(self.db)],cwd=ROOT,input=''.join(json.dumps(r)+'\n' for r in requests).encode('utf-8'),capture_output=True,timeout=10)
+        self.assertEqual(p.returncode,0,p.stderr)
+        rows=[json.loads(x) for x in p.stdout.decode('ascii').splitlines()]
+        card=json.loads(rows[-1]['result']['content'][0]['text'])
+        self.assertTrue(any('מידע' in (e['content_excerpt'] or '') for e in card['evidence']))
         self.assertEqual(before,self.db.read_bytes())
+    def test_commit_from_subdirectory(self):
+        # No commit or identity configuration required: write a deterministic commit object.
+        subprocess.run(['git','init','-q',str(self.repo)],check=True,capture_output=True)
+        tree=subprocess.run(['git','-C',str(self.repo),'mktree'],input=b'',capture_output=True,check=True).stdout.strip().decode()
+        import os
+        env={**os.environ,'GIT_AUTHOR_NAME':'Fixture','GIT_AUTHOR_EMAIL':'fixture@example.invalid','GIT_COMMITTER_NAME':'Fixture','GIT_COMMITTER_EMAIL':'fixture@example.invalid'}
+        sha=subprocess.run(['git','-C',str(self.repo),'commit-tree',tree],input=b'fixture\n',env=env,capture_output=True,check=True).stdout.strip().decode()
+        subprocess.run(['git','-C',str(self.repo),'update-ref','HEAD',sha],check=True,capture_output=True)
+        sub=self.repo/'nested'; sub.mkdir(); self.assertEqual(commit(sub),sha)
+    def test_legacy_inventory_coverage_unknown(self):
+        db=connect(self.db)
+        with db: db.execute('DROP TABLE scan_coverage')
+        db.close(); c=Context(self.db)
+        try: self.assertIn('unknowns',c.call('project_card',{'project_id':self.pid})['coverage'])
+        finally: c.close()
+    def test_synthetic_compatibility_and_hash(self):
+        fixture={'project_id':'synthetic-test','synthetic':True,'claims':[{'id':'privacy','statement':'Synthetic only','adaptation':'Check fields','source_path':'sample.txt','source_text':'allowlist'}],'unknowns':['Not live']}
+        file=self.root/'fixture.json'; file.write_text(json.dumps(fixture)); db=self.root/'reference.sqlite'
+        load_demo(db,file); load_demo(db,file); c=Context(db)
+        try:
+            r=c.call('get_reference_blueprint',{'project_id':'synthetic-test'})
+            import hashlib
+            self.assertTrue(r['synthetic']); self.assertEqual(len(r['claims']),1)
+            self.assertEqual(r['claims'][0]['source_sha256'],hashlib.sha256(b'allowlist').hexdigest())
+            self.assertNotIn('OpenRouter',json.dumps(r['coverage']))
+        finally: c.close()
+    def test_parse_failure_preserves_coverage(self):
+        before=self.context.call('project_card',{'project_id':self.pid})['coverage']
+        self.write('plugins/sample/.claude-plugin/plugin.json','invalid')
+        db=connect(self.db)
+        try:
+            with self.assertRaises(ValueError): scan(db,self.repo)
+        finally: db.close()
+        self.assertEqual(before,self.context.call('project_card',{'project_id':self.pid})['coverage'])
+    def test_parent_symlink_excluded(self):
+        outside=self.root/'outside'; outside.mkdir(); (outside/'a.yml').write_text('uses: secret@v1')
+        workflows=self.repo/'.github/workflows'
+        (workflows/'check.yml').unlink(); workflows.rmdir()
+        try: workflows.symlink_to(outside,target_is_directory=True)
+        except OSError: self.skipTest('Symlinks unavailable')
+        db=connect(self.db)
+        try: scan(db,self.repo)
+        finally: db.close()
+        card=self.context.call('project_card',{'project_id':self.pid})
+        self.assertNotIn('.github/workflows/a.yml',{e['path'] for e in card['evidence']})
+        self.assertTrue(any(x['reason']=='symlink' for x in card['coverage']['skipped']))
 
-if __name__=="__main__": unittest.main()
+if __name__=='__main__': unittest.main()

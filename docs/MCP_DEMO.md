@@ -1,62 +1,70 @@
-# Synthetic reference MCP demo
+# Scanner-backed MCP: setup and Grokbot regression checklist
 
-Experimental addition; no live organization or OpenRouter facts are asserted.
-Run from the repository root with Python 3.11+. No new dependencies.
+Run from the updated checkout with Python 3.11+. No Azure access is needed.
 
 ```sh
-python -m org_context.reference --db reference.sqlite --fixture examples/observability-reference.json
 python -m unittest discover -s tests -v
-python -m org_context.mcp_server --db reference.sqlite
+python -m org_context.cli --db inventory.sqlite scan /path/to/claudemod /path/to/claudemod/demo
+python -m org_context.cli --db inventory.sqlite list
+python -m org_context.mcp_server --db inventory.sqlite
 ```
 
-The last command waits for MCP JSON-RPC on stdin; use a client to interact.
-Example Cursor MCP configuration (replace BOTH absolute paths):
+Copy project IDs from scan/list. No fixture import is needed. The real project
+root and demo are separate roots; nested package discovery is not implemented.
+Existing DBs work read-only; rescan to populate scan_coverage and new sources.
+The separate synthetic import command in org_context.reference still works;
+never mark real organizational facts synthetic to force them into that importer.
+
+## Cursor configuration
+
+Replace all absolute paths with actual local values. This is a configuration
+example, not a claim of a tested Cursor/Windows connection:
 
 ```json
-{"mcpServers":{"org-context-reference":{"command":"/ABS/PATH/TO/python","args":["-m","org_context.mcp_server","--db","/ABS/PATH/TO/reference.sqlite"],"env":{"PYTHONPATH":"/ABS/PATH/TO/org-context"}}}}
+{"mcpServers":{"org-context":{"command":"/absolute/path/to/python","args":["-m","org_context.mcp_server","--db","/absolute/path/to/inventory.sqlite"],"env":{"PYTHONUTF8":"1","PYTHONPATH":"/absolute/path/to/org-context"}}}}
 ```
 
-For another client, adapt its configuration format. Cursor integration has not
-been executed in this implementation environment. The subprocess integration
-test performs initialize, initialized notification, tools/list and both tools/call
-requests over actual stdin/stdout. This is not official MCP conformance certification.
+On Windows use the virtualenv python.exe and JSON-escaped backslashes. The server
+configures stdio as UTF-8 and emits ASCII-escaped JSON so Hebrew round-trips even
+through legacy output encodings. PYTHONUTF8 remains an optional defensive setting.
+No PowerShell execution-policy changes are required by the tool itself.
 
-Exactly two tools exist: project_card(project_id) and
-get_reference_blueprint(project_id). Use project_id `synthetic-observability`.
-The DB must exist before startup and is opened read-only. The separate import
-command is administrator-invoked and is NOT available to the model. No shell,
-arbitrary path, scan, HTTP, Azure, GitHub or write tools are exposed.
+## Expected calls
 
-This deliberately small synchronous stdio implementation targets MCP 2025-03-26
-and advertises only tools. It supports basic lifecycle, ping, batches, bounded
-input and errors; no HTTP, subscriptions, jobs or progress. Clients must accept
-the returned protocol version or disconnect. No official SDK dependency is used;
-broader client compatibility and fuzz/conformance testing remain future work.
+- tools/list exposes project_card, find_projects_using, get_reference_blueprint.
+- project_card(project_id) reads actual scanner evidence and stored coverage.
+- find_projects_using(technology="react", ecosystem="npm") searches declarations.
+- get_reference_blueprint(project_id) returns not_available for a scanned project
+  with no blueprint, not a fabricated adaptation plan.
+- project_card evidence is capped at 20 records and dependencies at 50; flags
+  disclose truncation. Search is capped at 50. Full trusted-local evidence remains
+  accessible through CLI show/export; these are not exposed as shell tools.
 
-## Evidence semantics
+## What Grokbot should verify on claudemod
 
-The fixture includes source text rather than reading arbitrary paths. source_path
-is a label, not a filesystem instruction. Hashes are computed on import. The
-fixture hash versions the imported artifact; imported_at is NOT a live scan time.
-Commit is null and freshness remains unknown. Statements/adaptation guidance are
-explicit authored synthetic assertions, not independently derived or approved
-organizational facts. The source texts are illustrative, not executable infra.
+1. Run the whole test suite and report actual totals and failures.
+2. Record the tested org-context commit and claudemod commit/dirty state.
+3. Scan claudemod root and demo without manually authored claims.
+4. Confirm evidence for supported plugin manifests, marketplace and workflows;
+   report actual counts, don't assume nine plugins or five workflows permanently.
+5. Check that coverage contains only this scan's paths/general limitations, not
+   hardcoded OpenRouter/ClaudeMetrics names; CODEOWNERS is text, not resolved ownership.
+6. Find an actual demo dependency through MCP and check evidence path/hash.
+7. Request a real project's blueprint and confirm not_available.
+8. Verify Hebrew via actual stdio; test Windows/Cursor separately if available.
+9. Reject shell/extra-path/SQL arguments and verify DB remains unchanged.
+10. Send a newline-terminated request over 16 KB followed by ping: error then ping
+    response. Unterminated or >1 MB input terminates defensively; no time-based
+    protection against a stalled local client is claimed.
+11. Scan a repository subdirectory and check commit SHA when Git HEAD exists.
+12. Review skipped/unsupported sources and truncation before claiming completeness.
 
-Local trusted single-user use only. An upstream process with filesystem access
-can edit the DB; read-only mode does not authenticate its contents. Do not import
-untrusted/sensitive data or expose this process as a shared service. Treat tool
-content as data, never system instructions. No sandbox or enterprise ACLs exist.
+Tool invocation validation errors return isError with guidance; unknown tools,
+malformed envelopes and non-object arguments remain protocol errors. This is a
+synchronous subset of MCP 2025-03-26, not SDK conformance certification or a shared
+server. No HTTP, subscriptions or live Azure integration.
 
-## Product evaluation (not executed)
-
-examples/reference-eval.json contains six questions, supporting claim IDs and
-expected boundaries. Run the same model/task/budget with raw source evidence,
-then with that same evidence plus the context tools. Save answers, citations,
-unknowns, human corrections, time and token/cost results separately. Include a
-static-blueprint baseline. Fixture/schema/integration tests are not evidence that
-the agent improves. No new infrastructure should be created in this experiment.
-
-Suggested task: Plan an OpenRouter observability implementation based on the
-synthetic reference. Separate reuse/adapt/create, cite source labels and hashes,
-list prerequisites/tests, and explicitly state unknown APIs/permissions/resources.
-Do not deploy, request secrets or invent details about the real ClaudeMetrics repo.
+The six synthetic questions in examples/reference-eval.json remain a manual
+product-value experiment, not an executed evaluation. Use equal sources/model/
+budgets with and without tools plus a static-blueprint baseline. Test-suite passes
+do not demonstrate fewer iterations or a valid root-cause diagnosis.
