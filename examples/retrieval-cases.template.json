@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "review-root-count",
+      "tool": "list_projects",
+      "arguments": {"limit": 50, "offset": 0},
+      "checks": [{"path": "/projects", "op": "count", "expected": 12}]
+    },
+    {
+      "id": "review-pydantic-roots",
+      "tool": "find_projects_using",
+      "arguments": {"technology": "pydantic", "ecosystem": "python"},
+      "checks": [{"path": "/results", "op": "distinct_count", "field": "project_id", "expected": 4}]
+    }
+  ]
+}
