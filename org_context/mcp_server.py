@@ -3,6 +3,7 @@ import argparse
 import json
 import sys
 from .inventory_context import Context
+from .evidence_pages import READ_TOOL,read_evidence,add_scan_root
 VERSION='2025-03-26'
 MAX_LINE=16384
 HARD_LIMIT=1_048_576
@@ -15,7 +16,9 @@ TOOLS.append({'name':'find_projects_using','description':'Find declared package 
 def error(rid,code,message): return {'jsonrpc':'2.0','id':rid,'error':{'code':code,'message':message}}
 
 class Session:
-    def __init__(self,context): self.context=context; self.initialized=False; self.ready=False
+    def __init__(self,context,evidence_pages=False):
+        self.context=context; self.initialized=False; self.ready=False
+        self.tools=TOOLS+([READ_TOOL] if evidence_pages else [])
     def handle(self,req):
         if isinstance(req,list):
             if not req or len(req)>20 or any(isinstance(x,list) for x in req): return error(None,-32600,'Invalid batch')
@@ -37,13 +40,15 @@ class Session:
         elif not self.ready: return error(rid,-32002,'Initialize and send notifications/initialized first')
         elif method=='tools/list':
             if params.get('cursor') is not None: return error(rid,-32602,'No cursor supported')
-            value={'tools':TOOLS}
+            value={'tools':self.tools}
         elif method=='tools/call':
             name=params.get('name'); arguments=params.get('arguments',{})
-            if set(params)-{'name','arguments','_meta'} or not isinstance(name,str) or name not in {t['name'] for t in TOOLS}: return error(rid,-32602,'Unknown tool or invalid call')
+            if set(params)-{'name','arguments','_meta'} or not isinstance(name,str) or name not in {t['name'] for t in self.tools}: return error(rid,-32602,'Unknown tool or invalid call')
             if not isinstance(arguments,dict): return error(rid,-32602,'arguments must be an object')
             try:
-                result=self.context.call(name,arguments); text=json.dumps(result,ensure_ascii=True)
+                result=read_evidence(self.context,arguments) if name=='read_evidence' else self.context.call(name,arguments)
+                if name=='project_card': result=add_scan_root(self.context,result)
+                text=json.dumps(result,ensure_ascii=True)
                 if len(text)>200000: raise ValueError('Result too large; narrow inventory')
                 value={'content':[{'type':'text','text':text}],'isError':False}
             except ValueError as exc: value={'content':[{'type':'text','text':str(exc)}],'isError':True}
@@ -51,8 +56,8 @@ class Session:
         else: return error(rid,-32601,'Method not found')
         return {'jsonrpc':'2.0','id':rid,'result':value}
 
-def serve(context,source,sink):
-    session=Session(context)
+def serve(context,source,sink,evidence_pages=False):
+    session=Session(context,evidence_pages=evidence_pages)
     def send(r):
         if r is not None: sink.write(json.dumps(r,ensure_ascii=True)+'\n'); sink.flush()
     while True:
@@ -74,10 +79,12 @@ def serve(context,source,sink):
 def main():
     for stream in (sys.stdin,sys.stdout):
         if hasattr(stream,'reconfigure'): stream.reconfigure(encoding='utf-8',errors='strict')
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('--db',required=True); a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument('--db',required=True)
+    p.add_argument('--evidence-pages',action='store_true',help='Opt in to bounded stored-document reading; may reveal sensitive retained text')
+    a=p.parse_args()
     try: context=Context(a.db)
     except Exception: p.exit(2,'Inventory/reference database missing or invalid. Scan or import first.\n')
-    try: serve(context,sys.stdin,sys.stdout)
+    try: serve(context,sys.stdin,sys.stdout,evidence_pages=a.evidence_pages)
     finally: context.close()
 
 if __name__=='__main__': main()
