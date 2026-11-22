@@ -2,9 +2,12 @@
 
 This increment adds read_evidence and scan_root metadata, not richer workflow
 parsing, Git repository-root discovery, best-effort scanning or multi-user ACLs.
-The default tool set remains available without paging. Reading more retained
-document content is explicit opt-in because it may expose sensitive text already
-stored in SQLite.
+The default tool set remains available without paging. Scanned project cards
+return metadata only by default: content_excerpt is null, has_retained_body and
+retained_bytes describe body presence and stored-representation UTF-8 byte size,
+and content_withheld says that a body was not returned. Reading excerpts and
+paged bodies requires explicit --evidence-pages because retained text may be
+sensitive. The flag does not prevent bodies being stored locally during scanning.
 
 ```sh
 python -m unittest discover -s tests -v
@@ -14,7 +17,11 @@ python -m org_context.mcp_server --db inventory.sqlite --evidence-pages
 For Cursor/Claude Code, append --evidence-pages to the existing server args and
 restart the connection. With the flag tools/list should return SIX tools: the five
 default tools plus read_evidence. Without it five tools are listed and read_evidence
-is unavailable.
+is unavailable. With the flag, project cards can include excerpts up to 1500
+characters as well. This flag is a per-session disclosure choice, not an ACL or
+secret scrubber. Synthetic blueprint claims are a separate explicit read path;
+local CLI show also remains a full diagnostic read. Graph export omits bodies
+unless the local caller supplies export --include-content.
 
 Get project_id and evidence_id from project_card; call read_evidence with those
 full IDs, offset=0, limit=1500. Continue with next_offset and expected_sha256 set

@@ -6,22 +6,24 @@ Python 3.11+, local authorized single-user use only. No new dependencies.
 python -m unittest discover -s tests -v
 python -m org_context.cli --db inventory.sqlite scan /path/to/repo-a /path/to/repo-b /path/to/repo-b/demo
 python -m org_context.mcp_server --db inventory.sqlite
-# Optional full retained-document paging:
+# Optional scanned-document excerpts and paging:
 python -m org_context.mcp_server --db inventory.sqlite --evidence-pages
 ```
 
 Five tools are available by default: list_projects, project_card,
 find_projects_using, shared_dependencies and get_reference_blueprint.
 --evidence-pages adds read_evidence as a sixth tool. Restart clients after updating.
-See [evidence paging](EVIDENCE_PAGES.md); its historical three/four-tool counts
-are superseded by the five/six counts here. Existing inventory DBs need no migration
-for discovery; rescan if newer extraction coverage is required.
+See [evidence paging](EVIDENCE_PAGES.md). Default scanned project cards return
+metadata only, not excerpts. Existing complete inventory DBs need no migration
+for discovery. A write-side dependency-storage upgrade requires all old roots to
+be rescanned to recover formerly discarded specifications; see README.md.
 
 ## Agent workflow
 
 1. list_projects({}) discovers full scanned IDs without CLI access. Pages accept
    offset (0..100000) and limit (1..50, default 20). Follow next_offset.
-2. project_card({project_id: ...}) retrieves sources and scan coverage.
+2. project_card({project_id: ...}) retrieves source metadata and scan coverage;
+   document excerpts require the server flag, not a tool argument.
 3. find_projects_using({technology: "pydantic", ecosystem: "python"}) returns
    declarations with scan_root, commit, scan time, evidence ID, path and hash.
 4. shared_dependencies({}) finds packages declared by >=2 scanned project IDs.
@@ -64,7 +66,8 @@ Code must be tested separately, not inferred from Linux/SDK tests.
 - Test bad parameters, SQL-like literal search, readonly DB and paging opt-in.
 - Confirm five default/six opt-in tools and existing synthetic-reference behavior.
 
-This increment does NOT add Actions search, dependency-groups, requirements-*.txt,
-workspace discovery, repository_root, best-effort scanning or richer CI parsing.
+Python dependency-groups and root requirements-*.txt extraction are implemented.
+Actions search, workspace discovery, repository_root, best-effort scanning and
+richer CI parsing are NOT implemented in this safety increment.
 Known extraction gaps remain and must be reported in evaluation. The manual
 reference-eval experiment is still not an executed product-value measurement.
