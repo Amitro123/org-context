@@ -1,34 +1,107 @@
 # Roadmap
 
-## Prototype scope
-- Explicit-root local inventory, SQLite evidence, dependency search and JSON graph.
-- Unverified README references separated from structured dependency declarations.
-- Synthetic tests; real organizational repositories require an approved pilot.
+## Outcome and status
 
-## Next: reliability
-- Evaluate precision, omissions and stale snapshots on reviewed fixtures.
-- Report unsupported dependency expressions explicitly.
-- Lockfiles, opt-in monorepo discovery and configurable exclusions.
-- Canonical identities, dirty-state/branch tracking and credential-safe remotes.
-- Configurable README retention, classification, secret scanning and deletion.
+Target: organizational context for reference-based development, new integrations
+and evidence-backed investigation/repair. See [Product design](docs/PRODUCT_DESIGN.md).
 
-## Next: context
-- Read-only MCP with bounded tools, validation and explicit authorization design.
-- Task-specific context bundles with evidence, freshness and unknowns.
-- Serena read-only pilot in isolated commit-pinned workspaces.
-- Compare context-enhanced tasks against the same baseline tasks and budgets.
+Current: local explicit-root inventory, SQLite evidence, dependency search and
+JSON graph export with synthetic tests. README references are separated from
+structured declarations. Test presence is not a verified live deployment.
+Everything below is planned unless explicitly marked current.
 
-## Later, only after demonstrated need
-- Reviewed ownership, approved patterns and deprecation status.
-- Cross-repository API/infra/CI mappings with inferred/verified edges separated.
-- Incremental synchronization, history, corrections and conflict policy.
-- Graphify code-only evaluation; graph diffs after a stable schema exists.
-- Graphiti only if temporal investigation memory improves measured outcomes.
-- Dedicated graph storage only if workloads justify operational complexity.
-- Source ACL propagation, audit, cache permissions, retention and tenant isolation
-  BEFORE multi-user or organizational deployment.
+## Phase 0 - Establish a trustworthy baseline
 
-## Non-goals
-No automatic GitHub writes, autonomous edits, production credentials, cloud
-deployments, external-model extraction or automatic organization-wide scans.
-No promise of zero iterations or bug-free generated code.
+- Run tests against the exact repository commit; record results and fix blockers.
+- Preserve snapshot safety and report skipped/unsupported sources.
+- Choose a license through an owner decision; do not assume one.
+- Define data-handling rules before scanning real organizational repositories.
+
+Exit: reproducible local baseline, known limitations and approved pilot scope.
+
+## Phase 1 - Define the pilot and evaluation first
+
+Use a small, authorized slice around ClaudeMetrics: repository, pipeline,
+ingestion contracts, infrastructure, KQL and checks. Add agent-platform and
+notification references only when available and authorized. Do not scan the
+entire organization or claim live resource knowledge from repository files.
+
+- Define 5-10 competency questions and reviewed expected answers.
+- Establish replay fixtures covering all three product scenarios.
+- Include missing mappings, stale/conflicting sources, same-name entities,
+  failed evidence tools and cases where abstention is correct.
+- Compare the same agent/model/tasks/budgets with existing tools alone versus
+  existing tools plus org-context.
+- Measure supported correctness, relevant reuse, missed prerequisites, human
+  corrections, test selection, time, tokens and cost.
+
+Exit: repeatable benchmark and a documented adoption decision. Numerical success
+thresholds require owner approval. Evaluation continues through later phases.
+
+## Phase 2 - Versioned context contract and minimal read-only MCP
+
+- Define canonical project/system identities beyond local paths.
+- Model source claims with provenance, commit/version, observation time,
+  extraction method and verification status.
+- Return coverage, unknowns, conflicts and freshness (including unknown).
+- Distinguish repository host owner, CODEOWNERS rules and service ownership.
+- Record visibility only when known; metadata is not access enforcement.
+- Expose bounded local read-only tools for project cards, dependency discovery
+  and supported relationships. Do not expose arbitrary shell/SQL/path access.
+- Produce task-specific bundles before considering a dedicated graph database.
+
+Exit: an agent can consume supported context with evidence and explicit gaps.
+No cloud writes, deployment or autonomous repair.
+
+## Phase 3 - System map and reviewed implementation blueprint
+
+- Add selected deterministic sources: CODEOWNERS, existing catalog descriptors,
+  CI YAML, OpenAPI/proto; then targeted Docker/IaC/ADRs as evaluation requires.
+- Do not equate a declared API with deployed availability, or a workflow file
+  with a successful run. Consumer inference must carry evidence and limits.
+- Create one reviewed ClaudeMetrics observability blueprint linking code,
+  contracts, privacy requirements, identities, deployment and checks.
+- Classify components: reuse, adapt, create, verify, approval required.
+- Produce an OpenRouter adaptation plan, not automatic infrastructure creation.
+- Produce a DevOps monitoring-agent integration plan using known environment and
+  notification contracts, explicitly reporting absent sources.
+- Evaluate SBOM import/adapters instead of expanding every dependency parser;
+  Syft is a candidate producer and CycloneDX a candidate interchange format.
+
+Exit: source-backed plans for both development scenarios outperform the baseline
+under agreed criteria; manual curation is acceptable and recorded.
+
+## Phase 4 - Authorized operational context and investigation loop
+
+- Add read-only connectors for approved DevOps run/log metadata and Azure
+  resource/deployment/log evidence, with independent authorization.
+- Investigate exact run/commit/environment; separate desired, deployed and
+  observed state. Bind approved checks to components.
+- Structure hypotheses, evidence, proposed fixes and unknowns.
+- Replay an overnight failure before live shadow investigation.
+- Integrate with an external harness for staged approvals, isolated edits, CI,
+  draft PRs and deployment-linked PASS/FAIL/INCONCLUSIVE verification.
+- Track finding occurrences separately from problem fingerprints; prevent
+  duplicate actions without suppressing recurrence.
+- Close fixes only with required verification evidence, not on PR merge alone.
+
+Exit: one auditable investigation-to-verification slice without blocking ingestion.
+Writes require a separate design and explicit authorization; not granted here.
+
+## Deferred until evaluation justifies them
+
+- Serena for symbol-level work; Graphify/Graphicle for code-map enrichment.
+- Graphiti or other temporal investigation-memory frameworks.
+- Dedicated graph DB, graph diffs, automatic ontology generation and rich UI.
+- Incremental organization-wide discovery, extensive parser coverage and scale.
+
+Before multi-user use: source permission propagation, query/traversal and cache
+authorization, deletion/retention, tenant isolation, audit and secret handling.
+Security/correctness prerequisites are never deferred merely to ship context.
+
+## Invariants
+
+No secret values in context; no instructions trusted merely because they appear
+in scanned text; no inferred causation from graph paths; no implicit approval to
+create identities, change permissions, rerun pipelines or deploy. Graph/agent/Git
+failures must never interrupt compliance ingestion. No zero-iteration guarantee.
