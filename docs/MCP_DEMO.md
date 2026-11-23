@@ -26,6 +26,8 @@ be rescanned to recover formerly discarded specifications; see README.md.
    document excerpts require the server flag, not a tool argument.
 3. find_projects_using({technology: "pydantic", ecosystem: "python"}) returns
    declarations with scan_root, commit, scan time, evidence ID, path and hash.
+   Pages accept offset (0..100000) and limit (1..50, default 50); when has_more
+   is true, call again with next_offset.
 4. shared_dependencies({}) finds packages declared by >=2 scanned project IDs.
    Optional ecosystem and project_ids (2..10 distinct IDs) restrict the comparison;
    offset/limit page package groups. Each group's declarations are capped at 50
@@ -67,7 +69,8 @@ Code must be tested separately, not inferred from Linux/SDK tests.
 - Confirm five default/six opt-in tools and existing synthetic-reference behavior.
 
 Python dependency-groups and root requirements-*.txt extraction are implemented.
-Actions search, workspace discovery, repository_root, best-effort scanning and
+Workflow `uses:` extraction is lexical: quoted values are read; dynamic or
+unparsed values are counted in coverage, not stored. Actions search, workspace discovery, repository_root, best-effort scanning and
 richer CI parsing are NOT implemented in this safety increment.
 Known extraction gaps remain and must be reported in evaluation. The manual
 reference-eval experiment is still not an executed product-value measurement.

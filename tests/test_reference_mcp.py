@@ -128,7 +128,7 @@ class ContextTests(unittest.TestCase):
         projects=json.loads(result['result']['content'][0]['text'])['projects']
         self.assertEqual(projects[0]['project_id'],self.pid)
         result=s.handle(call('find_projects_using',{'technology':'react','ecosystem':'npm'}))
-        self.assertEqual(json.loads(result['result']['content'][0]['text'])['results'][0]['scan_root'],str(self.repo))
+        self.assertEqual(json.loads(result['result']['content'][0]['text'])['results'][0]['scan_root'],str(self.repo.resolve(strict=True)))
         result=s.handle(call('shared_dependencies',{}))
         self.assertEqual(json.loads(result['result']['content'][0]['text'])['groups'],[])
 

@@ -12,20 +12,24 @@ NAMES={'list_projects','shared_dependencies','find_projects_using'}
 def snapshot(db):
     db.execute('SAVEPOINT org_context_discovery')
     try: yield
-    finally: db.execute('RELEASE org_context_discovery')
+    except BaseException:
+        db.execute('ROLLBACK TO org_context_discovery')
+        db.execute('RELEASE org_context_discovery')
+        raise
+    else: db.execute('RELEASE org_context_discovery')
 
-def paging(args):
-    offset=args.get('offset',0); limit=args.get('limit',20)
+def paging(args,default_limit=20):
+    offset=args.get('offset',0); limit=args.get('limit',default_limit)
     if type(offset) is not int or not 0<=offset<=100000 or type(limit) is not int or not 1<=limit<=50:
         raise ValueError('offset must be 0..100000 and limit 1..50')
     return offset,limit
 
 def call(context,name,args):
     if name not in NAMES or not isinstance(args,dict): raise ValueError('Invalid discovery call')
-    allowed={'offset','limit'} if name=='list_projects' else ({'technology','ecosystem'} if name=='find_projects_using' else {'offset','limit','ecosystem','project_ids'})
+    allowed={'offset','limit'} if name=='list_projects' else ({'technology','ecosystem','offset','limit'} if name=='find_projects_using' else {'offset','limit','ecosystem','project_ids'})
     if set(args)-allowed: raise ValueError('Unexpected arguments')
     if name=='find_projects_using':
-        technology=args.get('technology'); eco=args.get('ecosystem')
+        technology=args.get('technology'); eco=args.get('ecosystem'); offset,limit=paging(args,50)
         if not isinstance(technology,str) or not 1<=len(technology)<=160: raise ValueError('technology must be 1..160 characters')
         if eco is not None and eco not in ('python','npm'): raise ValueError('Unsupported ecosystem')
         if not {'projects','dependencies','evidence'}<=context.tables:
@@ -33,8 +37,9 @@ def call(context,name,args):
         sql="SELECT p.id AS project_id,p.name AS project_name,p.root AS scan_root,p.commit_sha,p.scanned_at,d.ecosystem,d.name,d.scope,d.specification,e.id AS evidence_id,e.path,e.sha256 FROM dependencies d JOIN projects p ON p.id=d.project_id JOIN evidence e ON e.id=d.evidence_id WHERE ((d.ecosystem='python' AND d.name=?) OR (d.ecosystem='npm' AND d.name=?))"
         params=[re.sub(r'[-_.]+','-',technology.lower()),technology.lower()]
         if eco: sql+=' AND d.ecosystem=?';params.append(eco)
-        rows=[dict(r) for r in context.db.execute(sql+' ORDER BY p.id,d.scope,e.id LIMIT 51',params)]
-        return {'results':rows[:50],'truncated':len(rows)>50,'semantics':'declared_dependency; not runtime usage','unknowns':['No result does not prove absence outside scanned coverage']}
+        rows=[dict(r) for r in context.db.execute(sql+' ORDER BY p.id,d.ecosystem,d.name,d.scope,e.id,d.specification LIMIT ? OFFSET ?',params+[limit+1,offset])]
+        has_more=len(rows)>limit
+        return {'results':rows[:limit],'offset':offset,'truncated':has_more,'has_more':has_more,'next_offset':offset+limit if has_more else None,'semantics':'declared_dependency; not runtime usage','unknowns':['No result does not prove absence outside scanned coverage']}
     offset,limit=paging(args)
     if name=='list_projects':
         if 'projects' not in context.tables: return {'projects':[],'has_more':False,'next_offset':None,'unknowns':['No scanned inventory; synthetic references are not listed']}
