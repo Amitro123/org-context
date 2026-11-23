@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import re
 import sqlite3
-from .discovery import call as discovery_call
+from .discovery import SNAPSHOT_LIMITS, call as discovery_call
 from .reference import Context as ReferenceContext
 
 class Context:
@@ -31,12 +31,16 @@ class Context:
         if p is None:
             if self.reference:
                 result=self.reference.call(tool,arguments)
-                if result.get('status')=='ok': result['coverage']={'checked':['explicit synthetic fixture'],'not_checked':['live source state','actual permissions']}
+                if result.get('status')=='ok':
+                    result['freshness']='unknown'
+                    result['coverage']={'checked':['explicit synthetic fixture'],'not_checked':['live source state','actual permissions']}
                 return result
-            return {'status':'not_found','project_id':pid,'unknowns':['Project not in scanned snapshot']}
-        base={'status':'ok','project_id':pid,'name':p['name'],'synthetic':False,'snapshot':{'commit':p['commit_sha'],'scanned_at':p['scanned_at'],'freshness':'unknown; no remote or runtime check'},'unknowns':['Uncommitted changes and deployed version not verified']}
+            return {**SNAPSHOT_LIMITS,'status':'not_found','project_id':pid,'unknowns':['Project not in scanned snapshot']}
+        base={**SNAPSHOT_LIMITS,'status':'ok','project_id':pid,'name':p['name'],'synthetic':False,'snapshot':{'commit':p['commit_sha'],'scanned_at':p['scanned_at'],'freshness':'unknown'},'unknowns':['Uncommitted changes and deployed version not verified']}
         coverage=self.db.execute('SELECT payload FROM scan_coverage WHERE project_id=?',(pid,)).fetchone() if 'scan_coverage' in self.tables else None
         base['coverage']=json.loads(coverage[0]) if coverage else {'checked':[],'unknowns':['Legacy snapshot has no recorded coverage; rescan required']}
+        workflow_refs=base['coverage'].pop('workflow_references_by_path',None)
+        base['coverage']['workflow_reference_metadata']='recorded' if workflow_refs is not None else 'unknown; rescan required'
         if tool=='get_reference_blueprint': return {**base,'status':'not_available','unknowns':base['unknowns']+['No reviewed blueprint linked to this scanned project']}
         if base['coverage'].get('dependency_schema_version')!=1:
             base['unknowns'].append('Dependency-spec completeness is unverified for this legacy snapshot; rescan required')
@@ -52,6 +56,8 @@ class Context:
             if not include_content: e.update(content_excerpt=None,excerpt_truncated=False)
             else: e['excerpt_truncated']=bool(e['excerpt_truncated'])
             e['support_status']='source_declaration' if e['kind']!='unverified_document' else 'unverified_reference'
+            if e['kind']=='workflow' and workflow_refs is not None and e['path'] in workflow_refs:
+                e['workflow_declarations']=workflow_refs[e['path']]
         base['evidence']=rows[:20]; base['evidence_truncated']=len(rows)>20
         base['dependencies']=[dict(r) for r in self.db.execute('SELECT ecosystem,name,scope,specification,evidence_id FROM dependencies WHERE project_id=? ORDER BY ecosystem,name LIMIT 51',(pid,))] if 'dependencies' in self.tables else []
         base['dependencies_truncated']=len(base['dependencies'])>50; base['dependencies']=base['dependencies'][:50]

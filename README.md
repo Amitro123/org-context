@@ -41,6 +41,9 @@ default 50); follow `next_offset` while `has_more` is true.
 The latter returns `not_available` for a real scanned project without a linked
 blueprint; it does not invent one. Synthetic reference import remains separate.
 See [MCP setup and regression checklist](docs/MCP_DEMO.md).
+For the experimental multi-repo pilot, see [safe Cursor setup](docs/CURSOR_MCP.md)
+and the [paired evaluation protocol](docs/PILOT_EVAL.md). The pilot is not a
+Governance/Security/Eval gate or a production dependency.
 
 ## Extraction and coverage
 
@@ -51,6 +54,12 @@ See [MCP setup and regression checklist](docs/MCP_DEMO.md).
 - .github/workflows/*.yml and *.yaml: lexical `uses:` references only, not full
   YAML semantics, scripts, triggers, permissions or execution status. Quoted values
   are read; dynamic `${{ }}` and unparsed values are counted in coverage, not stored.
+- Conventional root `azure-pipelines.yml` / `.yaml` and `azure-pipelines-*`
+  YAML files: bounded lexical `template:` and simple `resources.repositories`
+  declarations only. No Azure/DevOps connection, template expansion, or run lookup.
+  `project_card` exposes constrained references on workflow evidence (up to 20
+  per file), without exposing evidence bodies; rescan old inventories for this
+  metadata.
 - .claude-plugin/plugin.json and marketplace.json, and
   plugins/*/.claude-plugin/plugin.json or plugins/*/plugin.json: selected string
   metadata and marketplace plugin names, not all plugin configuration.
@@ -75,6 +84,8 @@ naming the relative path and failure class. The previous snapshot is retained.
 Evidence hashes identify source bytes. Commit is obtained from Git even for a
 subdirectory; HEAD does not describe dirty files or prove deployment. Scan time
 is not remote freshness. Declarations are not runtime facts or approval.
+Discovery reports `freshness: unknown` and coverage limits even when no rows
+match. Project IDs identify resolved local scan roots, not stable repositories.
 
 ## Dependency storage upgrade
 
