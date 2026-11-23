@@ -18,6 +18,8 @@ from org_context.mcp_server import Session,serve,MAX_LINE,HARD_LIMIT
 
 ROOT=Path(__file__).resolve().parents[1]
 MARKER='RETAINED_BODY_SENTINEL_5f0c'
+README_BODY=MARKER+' מידע\n'
+README_BYTES=README_BODY.encode('utf-8')
 LEGACY_SCHEMA='\n    CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT,root TEXT UNIQUE,commit_sha TEXT,scanned_at TEXT);\n    CREATE TABLE IF NOT EXISTS evidence(id TEXT PRIMARY KEY,project_id TEXT REFERENCES projects(id),path TEXT,sha256 TEXT,kind TEXT,method TEXT,content TEXT);\n    CREATE TABLE IF NOT EXISTS dependencies(project_id TEXT REFERENCES projects(id),ecosystem TEXT,name TEXT,specification TEXT,scope TEXT,evidence_id TEXT REFERENCES evidence(id),UNIQUE(project_id,ecosystem,name,scope,evidence_id));\n    CREATE TABLE IF NOT EXISTS scan_coverage(project_id TEXT PRIMARY KEY REFERENCES projects(id),payload TEXT NOT NULL);\n    '
 
 def request(name,args,rid=3):
@@ -127,7 +129,8 @@ class SpecIntegrityTests(SafetyCase):
 
 class ContentGateTests(SafetyCase):
     def prepare(self):
-        self.write('README.md',MARKER+' מידע\n')
+        # Use identical fixture bytes on Windows and POSIX; retention preserves them.
+        (self.repo/'README.md').write_bytes(README_BYTES)
         self.write('CLAUDE.md',MARKER+' policy\n');self.write('CODEOWNERS',MARKER+' owner\n')
         self.write('.github/workflows/check.yml','- uses: fixture/'+MARKER+'@v1\n')
         self.write('.claude-plugin/plugin.json',json.dumps({'name':MARKER}))
@@ -144,7 +147,7 @@ class ContentGateTests(SafetyCase):
         for e in card['evidence']:self.assertIsNone(e['content_excerpt']);self.assertNotIn('content',e)
         readme=next(e for e in card['evidence'] if e['path']=='README.md')
         self.assertTrue(readme['has_retained_body']);self.assertTrue(readme['content_withheld'])
-        self.assertEqual(readme['retained_bytes'],len((MARKER+' מידע\n').encode('utf-8')))
+        self.assertEqual(readme['retained_bytes'],len(README_BYTES))
     def test_direct_opt_in_is_bounded_and_not_sticky(self):
         pid=self.prepare();self.write('README.md',MARKER+' מידע'*700);cli.scan(self.db,self.repo);c=self.context()
         card=c.call('project_card',{'project_id':pid},include_content=True)
@@ -163,7 +166,7 @@ class ContentGateTests(SafetyCase):
         eid=next(e['id'] for e in card['evidence'] if e['path']=='README.md')
         response=s.handle(request('read_evidence',{'project_id':pid,'evidence_id':eid}))
         body=json.loads(response['result']['content'][0]['text'])['content']
-        self.assertEqual(body,MARKER+' מידע\n')
+        self.assertEqual(body,README_BODY)
         self.assertNotIn(MARKER,json.dumps(self.card(c,pid,False)[1]));self.assertEqual(before,self.path.read_bytes())
     def test_arguments_cannot_enable_content(self):
         pid=self.prepare();s=initialize(Session(self.context()))
