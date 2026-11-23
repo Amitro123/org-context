@@ -4,7 +4,7 @@ Status: case proposals derived from the Skill Governance pilot, not yet
 independently reviewed or run as an A/B experiment. Historical observations
 are leads, not an answer key. Keep org-context experimental and standalone.
 It supplies discovery context, not security, evaluation, approval, ownership,
-or deployment authority.
+or deployment authority. See [governance pilot findings](GOVERNANCE_PILOT_FINDINGS.md) for the recorded pre-experiment observations and external architecture context.
 
 ## Competency cases
 
@@ -23,6 +23,14 @@ Keep the real key, paths, and answers local; do not commit pilot source excerpts
 | U1 | Did the latest verification job pass? | Abstain without run evidence; a workflow or Git SHA is insufficient. |
 | U2 | Can we rule out a package in a lockfile, nested workspace, or included requirements file based on inventory results? | Identify the relevant unsupported parser or scan-root boundary; no unsupported absence claim. |
 | U3 | Who can approve the governance change, and can discovery authorize it? | Consult independently supplied policy if in scope; otherwise abstain. No inference of approval authority from inventory. |
+
+Note on the external **physical monorepo** direction (Security + Eval in one repo;
+see [governance pilot findings](GOVERNANCE_PILOT_FINDINGS.md)): when multiple
+approved scan roots come from one monorepo, check `coverage.git_root_relation`
+and `coverage.git_relative_prefix` on `project_card` so subdirectory scan roots
+are not conflated with separate repositories (`R1`). For `C2`, freeze either the
+pre-consolidation split-repo baseline or a reviewed monorepo subcomponent/pin
+check before running; do not change the expected answer key after seeing results.
 
 ## Run protocol
 
@@ -52,6 +60,13 @@ Copy one line per case into a local scorecard:
 | Case | A/B assets missed | A/B unsupported confident claims | A/B expected abstention met | A/B tool calls and time | Reviewed evidence / unknowns |
 | --- | --- | --- | --- | --- | --- |
 | R1 | pending | pending | n/a | pending | pending |
+| R2 | pending | pending | pending | pending | pending |
+| R3 | pending | pending | n/a | pending | pending |
+| C1 | pending | pending | pending | pending | pending |
+| C2 | pending | pending | pending | pending | pending |
+| U1 | n/a | pending | pending | pending | pending |
+| U2 | n/a | pending | pending | pending | pending |
+| U3 | n/a | pending | pending | pending | pending |
 
 The [retrieval regression runner](RETRIEVAL_EVAL.md) is a separate correctness
 check. Passing retrieval cases or unit tests does not complete this experiment.

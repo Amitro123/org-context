@@ -42,7 +42,7 @@ The latter returns `not_available` for a real scanned project without a linked
 blueprint; it does not invent one. Synthetic reference import remains separate.
 See [MCP setup and regression checklist](docs/MCP_DEMO.md).
 For the experimental multi-repo pilot, see [safe Cursor setup](docs/CURSOR_MCP.md)
-and the [paired evaluation protocol](docs/PILOT_EVAL.md). The pilot is not a
+and the [paired evaluation protocol](docs/PILOT_EVAL.md) (see also [governance pilot findings](docs/GOVERNANCE_PILOT_FINDINGS.md)). The pilot is not a
 Governance/Security/Eval gate or a production dependency.
 
 ## Extraction and coverage
@@ -81,7 +81,7 @@ dependencies table says so and requires a rescan.
 A malformed or unreadable supported file fails that root with a content-free error
 naming the relative path and failure class. The previous snapshot is retained.
 
-Evidence hashes identify source bytes. Commit is obtained from Git even for a
+Evidence hashes identify source bytes. Commit and `git_root_relation` / `git_relative_prefix` are obtained from Git even for a
 subdirectory; HEAD does not describe dirty files or prove deployment. Scan time
 is not remote freshness. Declarations are not runtime facts or approval.
 Discovery reports `freshness: unknown` and coverage limits even when no rows

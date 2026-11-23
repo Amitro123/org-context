@@ -41,6 +41,8 @@ class Context:
         base['coverage']=json.loads(coverage[0]) if coverage else {'checked':[],'unknowns':['Legacy snapshot has no recorded coverage; rescan required']}
         workflow_refs=base['coverage'].pop('workflow_references_by_path',None)
         base['coverage']['workflow_reference_metadata']='recorded' if workflow_refs is not None else 'unknown; rescan required'
+        if 'git_root_relation' not in base['coverage']:
+            base['coverage']['git_root_relation']='unknown; rescan required'
         if tool=='get_reference_blueprint': return {**base,'status':'not_available','unknowns':base['unknowns']+['No reviewed blueprint linked to this scanned project']}
         if base['coverage'].get('dependency_schema_version')!=1:
             base['unknowns'].append('Dependency-spec completeness is unverified for this legacy snapshot; rescan required')

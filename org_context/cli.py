@@ -81,6 +81,17 @@ def commit(root):
 def normalize(name):
     return re.sub(r'[-_.]+','-',name).lower()
 
+def git_root_info(root):
+    try:
+        r=subprocess.run(['git','-C',str(root),'rev-parse','--show-prefix'],check=True,capture_output=True,text=True,timeout=5)
+        prefix=r.stdout.strip().strip('/')
+        if not prefix: return {'git_root_relation':'repository_root','git_relative_prefix':''}
+        if len(prefix)<=256 and '..' not in prefix.split('/') and all(ord(c)>=32 for c in prefix):
+            return {'git_root_relation':'subdirectory','git_relative_prefix':prefix}
+        return {'git_root_relation':'subdirectory','git_relative_prefix':None}
+    except (OSError,subprocess.SubprocessError):
+        return {'git_root_relation':'not_git_or_unknown','git_relative_prefix':None}
+
 def spec_item(raw,scope,notes):
     if not isinstance(raw,str): raise SourceFormatError('dependency entry is not text')
     value=raw.strip()
@@ -214,7 +225,7 @@ def scan(db,supplied):
         if count>1:
             omitted.append({'path':evidence_paths[declaration[-1]],'reason':'duplicate_declaration','count':count-1})
     deps=list(dict.fromkeys(deps))
-    coverage={'dependency_schema_version':1,'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'omitted_declarations':omitted,'partial_structures':structures,'unsupported':list(UNSUPPORTED),'not_checked':['runtime state','actual permissions','remote freshness'],'workflow_references_by_path':workflow_refs}
+    coverage={'dependency_schema_version':1,**git_root_info(root),'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'omitted_declarations':omitted,'partial_structures':structures,'unsupported':list(UNSUPPORTED),'not_checked':['runtime state','actual permissions','remote freshness'],'workflow_references_by_path':workflow_refs}
     with db:
         if not db.in_transaction: db.execute('BEGIN')
         _migrate_dependency_specs(db)

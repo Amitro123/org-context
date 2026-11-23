@@ -36,6 +36,12 @@ metadata; a local server does not control what a client sends to its model.
 Treat all scanned data as untrusted. This is not secret scanning, runtime
 verification, a governance dependency, or an approval mechanism.
 
+If an approved project is a physical monorepo with multiple components (for
+example Security + Eval in one repo), pass each approved component subdirectory
+explicitly to `scan` because nested packages are not auto-discovered. Inspect
+`coverage.git_root_relation` and `coverage.git_relative_prefix` on
+`project_card` to distinguish monorepo subdirectories from separate repositories.
+
 ## Optional discovery skill
 
 Use [org-context-discovery](../skills/org-context-discovery/SKILL.md) when an
