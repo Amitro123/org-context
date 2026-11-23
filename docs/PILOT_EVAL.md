@@ -56,6 +56,16 @@ Copy one line per case into a local scorecard:
 The [retrieval regression runner](RETRIEVAL_EVAL.md) is a separate correctness
 check. Passing retrieval cases or unit tests does not complete this experiment.
 
+## Optional follow-up: measure the skill separately
+
+Keep the [discovery skill](../skills/org-context-discovery/SKILL.md) out of both
+original arms. After the A/B run, compare B (MCP only) with C (same MCP plus
+the skill), using the same reviewed cases, frozen inputs, budgets, and blind
+scoring. Record the skill revision; do not add any tools or evidence access to C.
+Report differences in missed assets, unsupported confident claims, abstentions,
+and tool calls. Do not call fewer tool calls an improvement if correctness or
+abstention worsens. No skill effectiveness is assumed before this follow-up.
+
 ## Stable identity before multi-machine use
 
 Today the inventory key identifies a resolved local path. A move, new clone, or
