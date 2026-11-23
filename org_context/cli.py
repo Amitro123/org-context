@@ -56,6 +56,18 @@ def _migrate_dependency_specs(db):
         db.execute('ALTER TABLE dependencies_spec_upgrade RENAME TO dependencies')
     db.execute('PRAGMA user_version=1')
 
+def workflow_actions(text,notes):
+    """Lexically list `uses:` values; unparsed values are counted, never stored."""
+    actions=[]
+    for match in re.finditer(r'^\s*-?\s*uses:[ \t]*(.*)$',text,re.M):
+        value=re.sub(r'\s+#.*$','',match[1]).strip()
+        quoted=re.fullmatch(r'(["\'])(.*)\1',value)
+        if quoted: value=quoted[2].strip()
+        if re.fullmatch(r'[A-Za-z0-9_./@-]+',value): actions.append(value)
+        elif '${{' in value: notes['dynamic_action_reference']+=1
+        else: notes['unsupported_expression']+=1
+    return actions
+
 def commit(root):
     try:
         r=subprocess.run(['git','-C',str(root),'rev-parse','--verify','HEAD'],check=True,capture_output=True,text=True,timeout=5)
@@ -178,7 +190,7 @@ def scan(db,supplied):
                     summary['plugin_names']=[x['name'] for x in doc['plugins'] if isinstance(x,dict) and isinstance(x.get('name'),str)]
                 content=json.dumps(summary,ensure_ascii=False); kind='plugin_manifest'
             elif name.startswith('.github/workflows/'):
-                actions=re.findall(r'^\s*-?\s*uses:\s*([A-Za-z0-9_./@-]+)\s*(?:#.*)?$',text,re.M)
+                actions=workflow_actions(text,notes)
                 content=json.dumps({'declared_action_references':actions,'semantics':'lexical_only; no YAML validation or run-state check'},ensure_ascii=False)
                 kind='workflow'; method='bounded_lexical_extraction'
             elif name.endswith('CODEOWNERS') or name=='CLAUDE.md' or name.startswith('README'):
@@ -214,6 +226,8 @@ def show(db,value):
     if len(rows)!=1: raise ValueError('Missing or ambiguous project; use full ID from list')
     result=dict(rows[0])
     for table in ('evidence','dependencies'): result[table]=[dict(r) for r in db.execute('SELECT * FROM '+table+' WHERE project_id=?',(result['id'],))]
+    coverage=db.execute('SELECT payload FROM scan_coverage WHERE project_id=?',(result['id'],)).fetchone()
+    result['scan_coverage']=json.loads(coverage[0]) if coverage else None
     return result
 
 def graph(db,*,include_content=False):

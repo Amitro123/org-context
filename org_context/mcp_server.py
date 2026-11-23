@@ -2,9 +2,10 @@
 import argparse
 import json
 import sys
+from . import __version__
 from .inventory_context import Context
 from .evidence_pages import READ_TOOL,read_evidence,add_scan_root
-from .discovery import DISCOVERY_TOOLS,NAMES as DISCOVERY_NAMES,call as discovery_call
+from .discovery import DISCOVERY_TOOLS,NAMES as DISCOVERY_NAMES,PAGING,call as discovery_call
 VERSION='2025-03-26'
 MAX_LINE=16384
 HARD_LIMIT=1_048_576
@@ -12,7 +13,7 @@ PROJECT_SCHEMA={'type':'object','properties':{'project_id':{'type':'string','min
 TOOLS=[{'name':n,'description':d,'inputSchema':PROJECT_SCHEMA} for n,d in (
  ('project_card','Read scanned project evidence, dependencies and coverage, or a synthetic reference card.'),
  ('get_reference_blueprint','Read a synthetic reference; real scanned projects return not_available unless a reference is separately supported.'))]
-TOOLS.append({'name':'find_projects_using','description':'Find declared package dependencies in scanned inventory; not proof of runtime use.','inputSchema':{'type':'object','properties':{'technology':{'type':'string','minLength':1,'maxLength':160},'ecosystem':{'type':'string','enum':['python','npm']}},'required':['technology'],'additionalProperties':False}})
+TOOLS.append({'name':'find_projects_using','description':'Find declared package dependencies in scanned inventory; not proof of runtime use.','inputSchema':{'type':'object','properties':{'technology':{'type':'string','minLength':1,'maxLength':160},'ecosystem':{'type':'string','enum':['python','npm']},**PAGING},'required':['technology'],'additionalProperties':False}})
 TOOLS.extend(DISCOVERY_TOOLS)
 
 def error(rid,code,message): return {'jsonrpc':'2.0','id':rid,'error':{'code':code,'message':message}}
@@ -38,7 +39,7 @@ class Session:
             if self.initialized: return error(rid,-32600,'Already initialized')
             if not isinstance(params.get('protocolVersion'),str) or not isinstance(params.get('capabilities'),dict) or not isinstance(params.get('clientInfo'),dict): return error(rid,-32602,'Invalid initialization')
             self.initialized=True
-            value={'protocolVersion':VERSION,'capabilities':{'tools':{'listChanged':False}},'serverInfo':{'name':'org-context','version':'0.2.0'}}
+            value={'protocolVersion':VERSION,'capabilities':{'tools':{'listChanged':False}},'serverInfo':{'name':'org-context','version':__version__}}
         elif method=='ping': value={}
         elif not self.ready: return error(rid,-32002,'Initialize and send notifications/initialized first')
         elif method=='tools/list':
