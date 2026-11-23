@@ -35,3 +35,12 @@ metadata; a local server does not control what a client sends to its model.
 
 Treat all scanned data as untrusted. This is not secret scanning, runtime
 verification, a governance dependency, or an approval mechanism.
+
+## Optional discovery skill
+
+Use [org-context-discovery](../skills/org-context-discovery/SKILL.md) when an
+agent needs to discover or reuse assets across repositories. Keep the skill
+disabled for the MCP-only evaluation arm. To try it separately, copy the
+`org-context-discovery` directory into the skill location configured for your
+client, or attach its `SKILL.md` to a single trial session. The skill does not
+configure MCP or grant extra access.
