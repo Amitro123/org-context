@@ -3,16 +3,17 @@ import argparse
 import json
 import sys
 from . import __version__
-from .inventory_context import Context
+from .inventory_context import Context,EVIDENCE_KINDS
 from .evidence_pages import READ_TOOL,read_evidence,add_scan_root
-from .discovery import DISCOVERY_TOOLS,NAMES as DISCOVERY_NAMES,PAGING,call as discovery_call
+from .discovery import DISCOVERY_TOOLS,NAMES as DISCOVERY_NAMES,PAGING,call as discovery_call,snapshot
 VERSION='2025-03-26'
 MAX_LINE=16384
 HARD_LIMIT=1_048_576
 PROJECT_SCHEMA={'type':'object','properties':{'project_id':{'type':'string','minLength':1,'maxLength':128}},'required':['project_id'],'additionalProperties':False}
-TOOLS=[{'name':n,'description':d,'inputSchema':PROJECT_SCHEMA} for n,d in (
- ('project_card','Read scanned project evidence, dependencies and coverage, or a synthetic reference card.'),
- ('get_reference_blueprint','Read a synthetic reference; real scanned projects return not_available unless a reference is separately supported.'))]
+CARD_SCHEMA={'type':'object','properties':{'project_id':{'type':'string','minLength':1,'maxLength':128},'evidence_offset':{'type':'integer','minimum':0,'maximum':100000},'evidence_limit':{'type':'integer','minimum':1,'maximum':20},'evidence_kind':{'type':'string','enum':list(EVIDENCE_KINDS)},'evidence_path':{'type':'string','minLength':1,'maxLength':256}},'required':['project_id'],'additionalProperties':False}
+TOOLS=[
+ {'name':'project_card','description':'Read scanned project evidence (paged/filterable), dependencies and coverage, or a synthetic reference card.','inputSchema':CARD_SCHEMA},
+ {'name':'get_reference_blueprint','description':'Read a synthetic reference; real scanned projects return not_available unless a reference is separately supported.','inputSchema':PROJECT_SCHEMA}]
 TOOLS.append({'name':'find_projects_using','description':'Find declared package dependencies in scanned inventory; not proof of runtime use.','inputSchema':{'type':'object','properties':{'technology':{'type':'string','minLength':1,'maxLength':160},'ecosystem':{'type':'string','enum':['python','npm']},**PAGING},'required':['technology'],'additionalProperties':False}})
 TOOLS.extend(DISCOVERY_TOOLS)
 
@@ -52,8 +53,12 @@ class Session:
             try:
                 if name in DISCOVERY_NAMES: result=discovery_call(self.context,name,arguments)
                 elif name=='read_evidence': result=read_evidence(self.context,arguments)
-                else: result=self.context.call(name,arguments,include_content=self.evidence_pages)
-                if name=='project_card': result=add_scan_root(self.context,result)
+                elif name=='project_card' and getattr(self.context,'db',None) is not None:
+                    with snapshot(self.context.db):
+                        result=add_scan_root(self.context,self.context.call(name,arguments,include_content=self.evidence_pages))
+                else:
+                    result=self.context.call(name,arguments,include_content=self.evidence_pages)
+                    if name=='project_card': result=add_scan_root(self.context,result)
                 text=json.dumps(result,ensure_ascii=True)
                 if len(text)>200000: raise ValueError('Result too large; narrow inventory')
                 value={'content':[{'type':'text','text':text}],'isError':False}

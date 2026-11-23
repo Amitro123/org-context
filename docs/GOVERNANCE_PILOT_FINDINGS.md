@@ -29,8 +29,11 @@ scored** in this note.
 ## Architecture note (external)
 
 Governance product direction changed to a **physical monorepo** (Security + Eval
-in one repo). That decision is independent of org-context output and must not be
-driven by this inventory.
+in one repo). After monorepo consolidation, Eval lives under `modules/evaluation`
+and authority is the tree `engine_ref`, not the historical cross-repo pin SHA
+observed in the earlier split-repo pilot above. That decision is independent of
+org-context output and must not be driven by this inventory. Do not wire
+org-context into `enterprise-review`, trusted Eval execution, or approval.
 
 ## Recommendation (unchanged)
 
