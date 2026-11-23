@@ -29,8 +29,9 @@ see [governance pilot findings](GOVERNANCE_PILOT_FINDINGS.md)): when multiple
 approved scan roots come from one monorepo, check `coverage.git_root_relation`
 and `coverage.git_relative_prefix` on `project_card` so subdirectory scan roots
 are not conflated with separate repositories (`R1`). For `C2`, freeze either the
-pre-consolidation split-repo baseline or a reviewed monorepo subcomponent/pin
-check before running; do not change the expected answer key after seeing results.
+pre-consolidation split-repo baseline or a reviewed monorepo answer key (for
+example `eval_identity` / `IMPORT_PROVENANCE` instead of the old pin-only key)
+before running; do not change the expected answer key after seeing results.
 
 ## Run protocol
 

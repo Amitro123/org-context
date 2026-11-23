@@ -34,7 +34,13 @@ For `org-context`, optionally install in a virtual environment with
 serving make no network requests. Existing `show`, `search` and `export` commands
 remain available. Select `--db` before the CLI subcommand.
 
-Use the project ID returned by scan/list in `project_card`. The server also exposes
+Use the project ID returned by scan/list in `project_card`. `project_card`
+reads project metadata, coverage, evidence, and dependencies within one SQLite
+read snapshot; evidence metadata is deterministically ordered by `path, id`
+(limit 1..20, default 20) and supports `evidence_offset`, `evidence_limit`,
+`evidence_kind`, and `evidence_path` (`evidence_has_more` / `evidence_next_offset`,
+with `snapshot.scanned_at` / `commit` available to detect rescans between pages).
+The server also exposes
 `find_projects_using(technology, ecosystem?, offset?, limit?)` and
 `get_reference_blueprint`. `find_projects_using` pages declarations (limit 1..50,
 default 50); follow `next_offset` while `has_more` is true.

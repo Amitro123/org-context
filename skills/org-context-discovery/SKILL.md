@@ -21,7 +21,9 @@ budget. This skill does not change permissions or enable evidence-body access.
      `project_card` for relevant roots only (check `coverage.git_root_relation`
      and `coverage.git_relative_prefix` to distinguish monorepo subdirectories
      from separate repositories). For CI references, read
-     `evidence[].workflow_declarations` and the associated path; these are
+     `evidence[].workflow_declarations` and the associated path (if
+     `evidence_has_more` is true, follow `evidence_next_offset` or filter with
+     `evidence_kind: "workflow"` / `evidence_path`); these are
      lexical declarations, not verified template contents or deployment state.
 3. **Check coverage and verify useful leads.** Follow `next_offset` while
    `has_more` only if another page is needed to answer. Check truncation flags
