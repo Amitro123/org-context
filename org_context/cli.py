@@ -84,9 +84,12 @@ def normalize(name):
 def git_root_info(root):
     try:
         r=subprocess.run(['git','-C',str(root),'rev-parse','--show-prefix'],check=True,capture_output=True,text=True,timeout=5)
-        prefix=r.stdout.strip().strip('/')
-        if not prefix: return {'git_root_relation':'repository_root','git_relative_prefix':''}
-        if len(prefix)<=256 and '..' not in prefix.split('/') and all(ord(c)>=32 for c in prefix):
+        raw=r.stdout
+        if raw.endswith('\r\n'): raw=raw[:-2]
+        elif raw.endswith('\n'): raw=raw[:-1]
+        if raw=='': return {'git_root_relation':'repository_root','git_relative_prefix':''}
+        prefix=raw[:-1] if raw.endswith('/') else raw
+        if prefix and len(prefix)<=256 and '..' not in prefix.split('/') and all(ord(c)>=32 for c in prefix):
             return {'git_root_relation':'subdirectory','git_relative_prefix':prefix}
         return {'git_root_relation':'subdirectory','git_relative_prefix':None}
     except (OSError,subprocess.SubprocessError):
