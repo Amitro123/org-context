@@ -35,7 +35,9 @@ serving make no network requests. Existing `show`, `search` and `export` command
 remain available. Select `--db` before the CLI subcommand.
 
 Use the project ID returned by scan/list in `project_card`. The server also exposes
-`find_projects_using(technology, ecosystem?)` and `get_reference_blueprint`.
+`find_projects_using(technology, ecosystem?, offset?, limit?)` and
+`get_reference_blueprint`. `find_projects_using` pages declarations (limit 1..50,
+default 50); follow `next_offset` while `has_more` is true.
 The latter returns `not_available` for a real scanned project without a linked
 blueprint; it does not invent one. Synthetic reference import remains separate.
 See [MCP setup and regression checklist](docs/MCP_DEMO.md).
@@ -47,7 +49,8 @@ See [MCP setup and regression checklist](docs/MCP_DEMO.md).
 - CODEOWNERS at root, .github or docs: retained as reference text; ownership
   matching is NOT evaluated.
 - .github/workflows/*.yml and *.yaml: lexical `uses:` references only, not full
-  YAML semantics, scripts, triggers, permissions or execution status.
+  YAML semantics, scripts, triggers, permissions or execution status. Quoted values
+  are read; dynamic `${{ }}` and unparsed values are counted in coverage, not stored.
 - .claude-plugin/plugin.json and marketplace.json, and
   plugins/*/.claude-plugin/plugin.json or plugins/*/plugin.json: selected string
   metadata and marketplace plugin names, not all plugin configuration.
@@ -57,12 +60,14 @@ PEP 735 `[dependency-groups]` and npm declarations. Requirements-file suffixes a
 recorded as `requirements:<suffix>` and dependency groups as `group:<name>`; neither
 is treated as runtime. Lockfiles and Poetry-specific tables are not extracted.
 A snapshot records omitted declarations by file and reason (directives, direct
-references, environment markers or unsupported expressions) without storing the
+references, environment markers, dynamic action references or unsupported
+expressions) without storing the
 omitted text. It also reports detected structures that are not expanded:
 dependency-group includes, uv/npm workspaces and Poetry tables. Requirement
 includes, environment-marker evaluation and workspace member discovery are not
 implemented; nested packages require explicit roots. Legacy DBs can be read, but
-need rescanning for coverage.
+need rescanning for coverage. A card for a database lacking the evidence or
+dependencies table says so and requires a rescan.
 
 A malformed or unreadable supported file fails that root with a content-free error
 naming the relative path and failure class. The previous snapshot is retained.
@@ -122,5 +127,11 @@ gets -32700 without discarding the next valid bounded frame. Oversized frames
 still get -32600 and hard-limit overflows close the connection. No replacement
 characters are silently substituted. Text-only custom streams with decoding
 failures close after an error because safe resynchronization is unavailable.
+
+## Continuous integration
+
+A GitHub Actions workflow runs the unittest suite on Ubuntu and Windows with
+Python 3.11, 3.12 and 3.13. A passing run reports test results for those
+combinations only; it is not a security review or a production-readiness claim.
 
 Owner must choose a license before external reuse; no license grant is included.
