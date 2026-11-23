@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -103,3 +104,35 @@ class PilotCoverageTests(unittest.TestCase):
         self.assertEqual(refs['omitted_or_over_limit'], 3)
         self.assertNotIn('hidden', json.dumps(refs))
         self.assertNotIn('PRIVATE_SENTINEL', json.dumps(refs))
+
+    def test_monorepo_git_root_relation_and_legacy_fallback(self):
+        # Non-git directory
+        non_git_pid = cli.scan(self.db, self.root)['project_id']
+        non_git_card = self.ctx.call('project_card', {'project_id': non_git_pid})
+        self.assertEqual(non_git_card['coverage']['git_root_relation'], 'not_git_or_unknown')
+        self.assertIsNone(non_git_card['coverage']['git_relative_prefix'])
+
+        # Real git monorepo with component subdirectory
+        mono = self.root.parent / 'monorepo'
+        sub = mono / 'components' / 'eval'
+        sub.mkdir(parents=True)
+        (mono / 'README.md').write_text('monorepo root', encoding='utf-8')
+        (sub / 'pyproject.toml').write_text('[project]\nname = "eval"\ndependencies = ["pydantic>=2"]\n', encoding='utf-8')
+        subprocess.run(['git', '-C', str(mono), 'init'], check=True, capture_output=True)
+        root_pid = cli.scan(self.db, mono)['project_id']
+        sub_pid = cli.scan(self.db, sub)['project_id']
+        root_card = self.ctx.call('project_card', {'project_id': root_pid})
+        sub_card = self.ctx.call('project_card', {'project_id': sub_pid})
+        self.assertEqual(root_card['coverage']['git_root_relation'], 'repository_root')
+        self.assertEqual(root_card['coverage']['git_relative_prefix'], '')
+        self.assertEqual(sub_card['coverage']['git_root_relation'], 'subdirectory')
+        self.assertEqual(sub_card['coverage']['git_relative_prefix'], 'components/eval')
+
+        # Legacy snapshot without git_root_relation
+        payload = self.db.execute('SELECT payload FROM scan_coverage WHERE project_id=?', (sub_pid,)).fetchone()[0]
+        coverage = json.loads(payload)
+        del coverage['git_root_relation']
+        with self.db:
+            self.db.execute('UPDATE scan_coverage SET payload=? WHERE project_id=?', (json.dumps(coverage), sub_pid))
+        legacy_card = self.ctx.call('project_card', {'project_id': sub_pid})
+        self.assertEqual(legacy_card['coverage']['git_root_relation'], 'unknown; rescan required')

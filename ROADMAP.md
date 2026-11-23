@@ -13,6 +13,7 @@ declarations. Test presence is not a verified live deployment.
 Everything below is planned unless explicitly marked current.
 
 Current pilot priority: run the [paired multi-repo evaluation](docs/PILOT_EVAL.md)
+(see [governance pilot findings](docs/GOVERNANCE_PILOT_FINDINGS.md))
 and improve local coverage honesty. Do not expand to cloud connectors,
 Governance adapters, gates, or automated repair on retrieval results alone.
 

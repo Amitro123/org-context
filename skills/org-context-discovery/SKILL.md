@@ -18,7 +18,9 @@ budget. This skill does not change permissions or enable evidence-body access.
    - For shared packages, call `shared_dependencies`; constrain by `project_ids`
      or `ecosystem` when useful. Multiple scan roots may be from one repository.
    - To locate a root or unknown project ID, call `list_projects`. Then use
-     `project_card` for relevant roots only. For CI references, read
+     `project_card` for relevant roots only (check `coverage.git_root_relation`
+     and `coverage.git_relative_prefix` to distinguish monorepo subdirectories
+     from separate repositories). For CI references, read
      `evidence[].workflow_declarations` and the associated path; these are
      lexical declarations, not verified template contents or deployment state.
 3. **Check coverage and verify useful leads.** Follow `next_offset` while
