@@ -12,6 +12,10 @@ roots, not verified repositories. README references are separated from structure
 declarations. Test presence is not a verified live deployment.
 Everything below is planned unless explicitly marked current.
 
+Current pilot priority: run the [paired multi-repo evaluation](docs/PILOT_EVAL.md)
+and improve local coverage honesty. Do not expand to cloud connectors,
+Governance adapters, gates, or automated repair on retrieval results alone.
+
 ## Phase 0 - Establish a trustworthy baseline
 
 - Run tests against the exact repository commit; record results and fix blockers.

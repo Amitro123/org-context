@@ -9,9 +9,11 @@ import re
 import sqlite3
 import subprocess
 import tomllib
+from .workflow_refs import pipeline_metadata
 
 ALLOWED=('README','README.md','README.rst','README.txt','pyproject.toml','requirements.txt','package.json','CLAUDE.md','CODEOWNERS','.github/CODEOWNERS','docs/CODEOWNERS','.claude-plugin/plugin.json','.claude-plugin/marketplace.json')
-PATTERNS=('requirements-*.txt','.github/workflows/*.yml','.github/workflows/*.yaml','plugins/*/.claude-plugin/plugin.json','plugins/*/plugin.json')
+PIPELINE_PATTERNS=('azure-pipelines.yml','azure-pipelines.yaml','azure-pipelines-*.yml','azure-pipelines-*.yaml')
+PATTERNS=('requirements-*.txt','.github/workflows/*.yml','.github/workflows/*.yaml','plugins/*/.claude-plugin/plugin.json','plugins/*/plugin.json',*PIPELINE_PATTERNS)
 UNSUPPORTED=('lockfiles','nested package discovery','workspace member discovery','full YAML semantics','CODEOWNERS matching semantics','OpenAPI/IaC analysis','requirements include expansion','environment-marker evaluation','dependency-group include expansion')
 MAX_BYTES=256000
 MAX_FILES=128
@@ -159,7 +161,7 @@ def scan(db,supplied):
     if path.is_symlink(): raise ValueError('Root symlinks are not accepted')
     root=path.resolve(strict=True)
     if not root.is_dir(): raise ValueError('Root must be a directory')
-    pid=digest(str(root)); records=[]; deps=[]; skipped=[]; checked=[]; missing=[]; omitted=[]; structures=[]
+    pid=digest(str(root)); records=[]; deps=[]; skipped=[]; checked=[]; missing=[]; omitted=[]; structures=[]; workflow_refs={}
     candidates=[root/n for n in ALLOWED]
     for pattern in PATTERNS:
         for p in root.glob(pattern):
@@ -193,6 +195,9 @@ def scan(db,supplied):
                 actions=workflow_actions(text,notes)
                 content=json.dumps({'declared_action_references':actions,'semantics':'lexical_only; no YAML validation or run-state check'},ensure_ascii=False)
                 kind='workflow'; method='bounded_lexical_extraction'
+            elif '/' not in name and name.startswith('azure-pipelines') and name.endswith(('.yml','.yaml')):
+                kind='workflow'; method='bounded_lexical_extraction'
+                workflow_refs[name]=pipeline_metadata(text)
             elif name.endswith('CODEOWNERS') or name=='CLAUDE.md' or name.startswith('README'):
                 content=text; kind='unverified_document'; method='reference_text'
         except SourceFormatError as exc:
@@ -209,7 +214,7 @@ def scan(db,supplied):
         if count>1:
             omitted.append({'path':evidence_paths[declaration[-1]],'reason':'duplicate_declaration','count':count-1})
     deps=list(dict.fromkeys(deps))
-    coverage={'dependency_schema_version':1,'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'omitted_declarations':omitted,'partial_structures':structures,'unsupported':list(UNSUPPORTED),'not_checked':['runtime state','actual permissions','remote freshness']}
+    coverage={'dependency_schema_version':1,'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'omitted_declarations':omitted,'partial_structures':structures,'unsupported':list(UNSUPPORTED),'not_checked':['runtime state','actual permissions','remote freshness'],'workflow_references_by_path':workflow_refs}
     with db:
         if not db.in_transaction: db.execute('BEGIN')
         _migrate_dependency_specs(db)

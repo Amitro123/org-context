@@ -47,6 +47,7 @@ The local client must be authorized for all projects and local paths in the DB.
 
 ## Cursor/Claude Code
 
+For a minimal approved-roots-only Cursor config, see [safe Cursor setup](CURSOR_MCP.md).
 Keep the existing stdio configuration, pointing --db at inventory.sqlite and
 PYTHONPATH at the checkout. Add --evidence-pages only if reading retained document
 text is approved. PythonUTF8=1 may be retained as a defensive environment setting.
@@ -70,7 +71,11 @@ Code must be tested separately, not inferred from Linux/SDK tests.
 
 Python dependency-groups and root requirements-*.txt extraction are implemented.
 Workflow `uses:` extraction is lexical: quoted values are read; dynamic or
-unparsed values are counted in coverage, not stored. Actions search, workspace discovery, repository_root, best-effort scanning and
-richer CI parsing are NOT implemented in this safety increment.
+unparsed values are counted in coverage, not stored. Project cards can also
+surface bounded lexical template and repository declarations from conventional
+root Azure pipeline YAML. These are local declarations, not evaluated YAML or
+deployed state. Actions search, workspace discovery, repository_root,
+best-effort scanning and full CI parsing are not implemented.
 Known extraction gaps remain and must be reported in evaluation. The manual
-reference-eval experiment is still not an executed product-value measurement.
+reference-eval experiment is still not an executed product-value measurement;
+see [paired pilot evaluation](PILOT_EVAL.md).
