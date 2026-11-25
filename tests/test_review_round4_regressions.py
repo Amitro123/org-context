@@ -200,3 +200,85 @@ class ConditionalSiblingAncestryTests(TestCase):
         capped = pipeline_metadata(many)
         self.assertEqual(len(capped['references']), MAX_REFS)
         self.assertEqual(capped['omitted_or_over_limit'], 2)
+
+
+class InlineCommentContextTests(TestCase):
+    def test_reproduction_a_comment_on_parameters_through_scan_and_mcp(self):
+        yaml_text = (
+            'steps:\n'
+            '- template: steps/real.yml\n'
+            '  parameters: # configuration\n'
+            '    steps:\n'
+            '    - template: data/not-used.yml\n'
+            '- template: steps/after.yml\n'
+        )
+        decls, payload = _scan_and_get_azure_declarations(yaml_text)
+        self.assertEqual(decls['references'], [
+            {'kind': 'template', 'reference': 'steps/real.yml'},
+            {'kind': 'template', 'reference': 'steps/after.yml'},
+        ])
+        self.assertEqual(decls['omitted_or_over_limit'], 1)
+        self.assertNotIn('data/not-used.yml', payload)
+
+    def test_reproduction_b_comment_on_root_section_preserves_valid_template(self):
+        for section in ('steps', 'jobs', 'stages', 'variables'):
+            with self.subTest(section=section):
+                yaml_text = f'{section}: # pipeline {section}\n- template: {section}/real.yml\n'
+                meta = pipeline_metadata(yaml_text)
+                self.assertEqual(meta['references'], [{'kind': 'template', 'reference': f'{section}/real.yml'}])
+                self.assertEqual(meta['omitted_or_over_limit'], 0)
+
+    def test_comment_invariance_matrix_for_quoted_and_unquoted_parameters(self):
+        for param_key in ('parameters', "'parameters'", '"parameters"'):
+            for nested_section in ('steps', 'jobs', 'stages', 'variables'):
+                for comment in ('', ' # configuration'):
+                    with self.subTest(param_key=param_key, nested_section=nested_section, comment=comment):
+                        yaml_text = (
+                            'steps: # root\n'
+                            '- template: steps/real.yml\n'
+                            f'  {param_key}:{comment}\n'
+                            f'    {nested_section}:{comment}\n'
+                            '    - template: data/not-used.yml\n'
+                            '- template: steps/after.yml\n'
+                        )
+                        meta = pipeline_metadata(yaml_text)
+                        self.assertEqual(meta['references'], [
+                            {'kind': 'template', 'reference': 'steps/real.yml'},
+                            {'kind': 'template', 'reference': 'steps/after.yml'},
+                        ])
+                        self.assertEqual(meta['omitted_or_over_limit'], 1)
+                        self.assertNotIn('data/not-used.yml', json.dumps(meta))
+
+    def test_conditional_keys_with_comments_and_quoted_hash_scalars(self):
+        yaml_text = (
+            'jobs: # top-level jobs\n'
+            '- template: jobs/first.yml\n'
+            '  parameters: # job params\n'
+            '    label: "# not a comment"\n'
+            '    note: \'# also not a comment\' # trailing\n'
+            '    steps: # nested param steps\n'
+            '    - template: data/not-used.yml\n'
+            '- ${{ if true }}: # conditional sibling\n'
+            '  - template: jobs/second.yml # valid ref\n'
+            '  - template: "dir/file #1.yml" # invalid filename with hash\n'
+        )
+        meta = pipeline_metadata(yaml_text)
+        self.assertEqual(meta['references'], [
+            {'kind': 'template', 'reference': 'jobs/first.yml'},
+            {'kind': 'template', 'reference': 'jobs/second.yml'},
+        ])
+        self.assertEqual(meta['omitted_or_over_limit'], 2)
+        self.assertNotIn('not-used', json.dumps(meta))
+        self.assertNotIn('file #1', json.dumps(meta))
+
+        # Block scalar with inline comment must still skip its body.
+        block_yaml = (
+            'steps: # steps\n'
+            '- script: | # shell block\n'
+            '    - template: fake/in-block.yml\n'
+            '- template: steps/real.yml\n'
+        )
+        block_meta = pipeline_metadata(block_yaml)
+        self.assertEqual(block_meta['references'], [{'kind': 'template', 'reference': 'steps/real.yml'}])
+        self.assertEqual(block_meta['omitted_or_over_limit'], 0)
+        self.assertNotIn('in-block', json.dumps(block_meta))
