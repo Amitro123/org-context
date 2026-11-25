@@ -37,7 +37,7 @@ _WS = re.compile(r'[ \t\r\n\f\v]+')
 _BIDI = frozenset([0x200B, 0x200C, 0x200D, 0x200E, 0x200F, *range(0x202A, 0x202F),
                    0x2060, *range(0x2066, 0x206A), 0xFEFF])
 # Control characters, lone surrogates, and line/paragraph separators.
-_REJECTED_CATEGORIES = frozenset(['Cc', 'Cs', 'Zl', 'Zp'])
+_REJECTED_CATEGORIES = frozenset(['Cc', 'Cf', 'Cs', 'Zl', 'Zp'])
 _ESCAPES = {'\\': '\\', '"': '"', '/': '/', 'n': '\n', 't': '\t', 'r': '\r'}
 _PLAIN_FORBIDDEN_START = tuple('[{&*!%@`')
 
@@ -304,6 +304,8 @@ def collect_skill_declarations(root, taken_ids, is_safe):
             try:
                 rel.encode('utf-8')
                 _validate_relpath(rel, 'skill path', _PathError)
+                if any(unicodedata.category(c) in _REJECTED_CATEGORIES for c in rel):
+                    raise _PathError('invalid_path')
             except (_PathError, UnicodeEncodeError):
                 raise FrontmatterError('invalid_path') from None
             component = _component(root, rel)

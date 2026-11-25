@@ -138,6 +138,8 @@ class ParseFrontmatterTests(TestCase):
             '---\nname: a\ndescription: "a \\ud800 b"\n---\n': 'malformed_frontmatter',
             '---\nname: a\ndescription: "pair \\ud83d\\ude00"\n---\n': 'malformed_frontmatter',
             '---\nname: a\ndescription: safe\u200bskill\n---\n': 'invalid_field',
+            '---\nname: a\ndescription: hid\U000e0041den\n---\n': 'invalid_field',
+            '---\nname: a\ndescription: soft\u00adhyphen\n---\n': 'invalid_field',
             '---\nname: a\ndescription: x\u2060y\n---\n': 'invalid_field',
             '---\nname: a\ndescription: x\ufeffy\n---\n': 'invalid_field',
             '---\nname: a\ndescription: line\u2028break\n---\n': 'invalid_field',
@@ -290,6 +292,13 @@ class SkillScanTests(TestCase):
         for s in cov['skipped']:
             s['path'].encode('utf-8')
         json.dumps(res, ensure_ascii=False).encode('utf-8')
+
+    def test_bidi_path_is_invalid_path(self):  # AC 4
+        self._fixture()
+        self._write('skills/\u202etxt.evil/SKILL.md', _skill('evil', 'A skill in a folder with a bidi override'))
+        res = cli.scan(self.db, self.root)
+        cov = res['coverage']['skill_frontmatter']
+        self.assertEqual(cov['skipped_by_reason'].get('invalid_path'), 1)
 
     def test_surrogate_escape_never_fails_scan(self):  # AC 4
         self._fixture()
