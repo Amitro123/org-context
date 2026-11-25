@@ -33,7 +33,11 @@ _BOM = b'\xef\xbb\xbf'
 _KEY_LINE = re.compile(r'^([A-Za-z_][A-Za-z0-9_-]*):(?: (.*))?$')
 _BLOCK = re.compile(r'^([|>])([-+]?)(?:[ ]+#.*)?$')
 _WS = re.compile(r'[ \t\r\n\f\v]+')
-_BIDI = frozenset([0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)])
+# Bidi controls plus zero-width/invisible characters that would hide text in tool output.
+_BIDI = frozenset([0x200B, 0x200C, 0x200D, 0x200E, 0x200F, *range(0x202A, 0x202F),
+                   0x2060, *range(0x2066, 0x206A), 0xFEFF])
+# Control characters, lone surrogates, and line/paragraph separators.
+_REJECTED_CATEGORIES = frozenset(['Cc', 'Cs', 'Zl', 'Zp'])
 _ESCAPES = {'\\': '\\', '"': '"', '/': '/', 'n': '\n', 't': '\t', 'r': '\r'}
 _PLAIN_FORBIDDEN_START = tuple('[{&*!%@`')
 
@@ -147,7 +151,10 @@ def _double_quoted(text):
                 hexpart = text[i + 2:i + 6]
                 if len(hexpart) != 4 or not all(c in '0123456789abcdefABCDEF' for c in hexpart):
                     raise _malformed()
-                out.append(chr(int(hexpart, 16))); i += 6; continue
+                code = int(hexpart, 16)
+                if 0xD800 <= code <= 0xDFFF:
+                    raise _malformed()
+                out.append(chr(code)); i += 6; continue
             raise _malformed()
         out.append(ch); i += 1
     raise _malformed()
@@ -200,7 +207,7 @@ def _value(first, conts):
 def _normalize(value):
     value = _WS.sub(' ', value).strip()
     for ch in value:
-        if unicodedata.category(ch) == 'Cc' or ord(ch) in _BIDI:
+        if unicodedata.category(ch) in _REJECTED_CATEGORIES or ord(ch) in _BIDI:
             raise FrontmatterError('invalid_field')
     return value
 
@@ -295,8 +302,9 @@ def collect_skill_declarations(root, taken_ids, is_safe):
             if index >= MAX_SKILL_FILES:
                 raise FrontmatterError('file_limit')
             try:
+                rel.encode('utf-8')
                 _validate_relpath(rel, 'skill path', _PathError)
-            except _PathError:
+            except (_PathError, UnicodeEncodeError):
                 raise FrontmatterError('invalid_path') from None
             component = _component(root, rel)
             try:
@@ -311,7 +319,9 @@ def collect_skill_declarations(root, taken_ids, is_safe):
             if parsed['name'] in taken:
                 raise FrontmatterError('duplicate_capability_id')
         except FrontmatterError as exc:
-            skipped.append({'path': rel, 'reason': exc.reason})
+            # A path that is not valid UTF-8 is reported with its bad bytes escaped.
+            safe_rel = rel.encode('utf-8', 'backslashreplace').decode('utf-8')
+            skipped.append({'path': safe_rel, 'reason': exc.reason})
             continue
         taken.add(parsed['name'])
         declarations.append({

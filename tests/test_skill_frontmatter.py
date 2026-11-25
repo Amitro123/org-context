@@ -135,6 +135,13 @@ class ParseFrontmatterTests(TestCase):
             '---\nname: a\ndescription: d\nwhen_to_use: ' + 'x' * 1025 + '\n---\n': 'invalid_field',
             '---\nname: a\ndescription: evil \u202e text\n---\n': 'invalid_field',
             '---\nname: a\ndescription: "ctl \\u0001"\n---\n': 'invalid_field',
+            '---\nname: a\ndescription: "a \\ud800 b"\n---\n': 'malformed_frontmatter',
+            '---\nname: a\ndescription: "pair \\ud83d\\ude00"\n---\n': 'malformed_frontmatter',
+            '---\nname: a\ndescription: safe\u200bskill\n---\n': 'invalid_field',
+            '---\nname: a\ndescription: x\u2060y\n---\n': 'invalid_field',
+            '---\nname: a\ndescription: x\ufeffy\n---\n': 'invalid_field',
+            '---\nname: a\ndescription: line\u2028break\n---\n': 'invalid_field',
+            '---\nname: a\ndescription: d\nwhen_to_use: para\u2029break\n---\n': 'invalid_field',
         }
         for text, expected in cases.items():
             with self.subTest(text=text[:60]):
@@ -261,6 +268,37 @@ class SkillScanTests(TestCase):
             self.assertEqual(set(s), {'path', 'reason'})
         # Skill skips do not leak into the main coverage skipped list.
         self.assertEqual(res['coverage']['skipped'], [])
+
+    def test_non_utf8_path_is_invalid_path_and_scan_succeeds(self):  # AC 4, 8
+        if os.name != 'posix':
+            self.skipTest('needs raw-byte file names')
+        self._fixture()
+        body = _skill('oddname', 'A skill in a folder whose name is not UTF-8').encode('utf-8')
+        for raw in (b'skills/bad\xffname/SKILL.md', b'plugins/bad\xffplug/skills/x/SKILL.md'):
+            target = os.fsencode(self.root) + b'/' + raw
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, 'wb') as fh:
+                fh.write(body)
+        try:
+            res = cli.scan(self.db, self.root)
+        except UnicodeEncodeError:  # pragma: no cover - the regression this guards
+            self.fail('a non-UTF-8 skill path made the scan raise')
+        cov = res['coverage']['skill_frontmatter']
+        self.assertEqual(cov['indexed'], 3)
+        self.assertEqual(res['capability_count'], 3)
+        self.assertEqual(cov['skipped_by_reason'].get('invalid_path'), 2)
+        for s in cov['skipped']:
+            s['path'].encode('utf-8')
+        json.dumps(res, ensure_ascii=False).encode('utf-8')
+
+    def test_surrogate_escape_never_fails_scan(self):  # AC 4
+        self._fixture()
+        self._write('skills/sur/SKILL.md', '---\nname: sur\ndescription: "a \\ud800 b"\n---\n')
+        res = cli.scan(self.db, self.root)
+        cov = res['coverage']['skill_frontmatter']
+        self.assertEqual(cov['indexed'], 3)
+        self.assertEqual({s['path']: s['reason'] for s in cov['skipped']},
+                         {'skills/sur/SKILL.md': 'malformed_frontmatter'})
 
     def test_byte_bound_and_file_limit(self):  # AC 5
         self._write('skills/huge/SKILL.md', '---\nname: huge\ndescription: d\n' + ('# ' + 'p' * 1000 + '\n') * 40 + '---\n')
