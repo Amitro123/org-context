@@ -24,7 +24,28 @@ _UNSUPPORTED_PARENT = '__unsupported__'
 
 
 def _scalar(value):
-    return re.sub(r'\s+#.*$', '', value).strip()
+    s = value.strip()
+    if not s or s.startswith('#'):
+        return ''
+    if s[0] in "\"'":
+        quote = s[0]
+        i = 1
+        while i < len(s):
+            ch = s[i]
+            if quote == '"' and ch == '\\' and i + 1 < len(s):
+                i += 2
+                continue
+            if quote == "'" and ch == "'" and i + 1 < len(s) and s[i + 1] == "'":
+                i += 2
+                continue
+            if ch == quote:
+                tail = s[i + 1:]
+                if not tail or re.fullmatch(r'[ \t]+(?:#.*)?', tail):
+                    return s[:i + 1]
+                break
+            i += 1
+        return s
+    return re.sub(r'[ \t]+#.*$', '', s).strip()
 
 
 def _unquote(value):
