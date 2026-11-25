@@ -41,7 +41,10 @@ read snapshot; evidence metadata is deterministically ordered by `path, id`
 `evidence_kind`, and `evidence_path` (`evidence_has_more` / `evidence_next_offset`,
 with `snapshot.scanned_at` / `commit` available to detect rescans between pages).
 The server also exposes
-`find_projects_using(technology, ecosystem?, offset?, limit?)` and
+`find_projects_using(technology, ecosystem?, offset?, limit?)`,
+`find_capabilities(query, role?, project_id?, offset?, limit?)` (backed by
+optional root `org-context.manifest.json` files; see
+[capability manifest](docs/CAPABILITY_MANIFEST.md)), and
 `get_reference_blueprint`. `find_projects_using` pages declarations (limit 1..50,
 default 50); follow `next_offset` while `has_more` is true.
 The latter returns `not_available` for a real scanned project without a linked

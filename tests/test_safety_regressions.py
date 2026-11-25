@@ -157,12 +157,12 @@ class ContentGateTests(SafetyCase):
     def test_default_session_has_no_body_or_read_tool(self):
         pid=self.prepare();s,card=self.card(self.context(),pid)
         self.assertNotIn(MARKER,json.dumps(card))
-        tools=s.handle({'jsonrpc':'2.0','id':7,'method':'tools/list'})['result']['tools'];self.assertEqual(len(tools),5)
+        tools=s.handle({'jsonrpc':'2.0','id':7,'method':'tools/list'})['result']['tools'];self.assertEqual(len(tools),6)
         eid=card['evidence'][0]['id']
         self.assertEqual(s.handle(request('read_evidence',{'project_id':pid,'evidence_id':eid}))['error']['code'],-32602)
     def test_opt_in_session_reads_body_and_default_session_stays_private(self):
         pid=self.prepare();c=self.context();before=self.path.read_bytes();s,card=self.card(c,pid,True)
-        self.assertIn(MARKER,json.dumps(card));self.assertEqual(len(s.tools),6)
+        self.assertIn(MARKER,json.dumps(card));self.assertEqual(len(s.tools),7)
         eid=next(e['id'] for e in card['evidence'] if e['path']=='README.md')
         response=s.handle(request('read_evidence',{'project_id':pid,'evidence_id':eid}))
         body=json.loads(response['result']['content'][0]['text'])['content']

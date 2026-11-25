@@ -13,6 +13,10 @@ budget. This skill does not change permissions or enable evidence-body access.
    repository, or CI reference. Skip inventory calls when the relevant source
    file is already known and can be inspected directly.
 2. **Make a focused discovery call.**
+   - For “where is responsibility/capability X implemented?”, call
+     `find_capabilities` with a concise `query` (and `role` or `project_id` if
+     known). Declared symbols are labels (not resolved) and missing entry points
+     are not verified.
    - For “who declares X?”, call `find_projects_using` with `technology` and
      `ecosystem` if known. Package declarations and scopes are not runtime use.
    - For shared packages, call `shared_dependencies`; constrain by `project_ids`
