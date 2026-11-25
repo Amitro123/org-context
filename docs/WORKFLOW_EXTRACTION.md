@@ -20,6 +20,45 @@ evaluation, template expansion, execution status, deployment state, or approval.
     file bodies.
   - Nested pipeline files outside the scan root are not auto-discovered.
 
+## CI install commands (`ci-install:<path>` dependencies)
+
+`org_context/ci_installs.py` reads the shell text of GitHub Actions `run:` values
+and Azure Pipelines `script:`, `bash:` and `pwsh:` values in the files above.
+Nothing is executed, and shell or YAML is never evaluated (no variable
+expansion, conditions or matrix).
+
+- **Locating shell text:** a key line `run:` (or `- run:`); an inline value is one
+  shell line (one level of quotes removed); a block scalar (`|`, `>`, with
+  modifiers) body is every following line indented deeper than the key, read line
+  by line. A `run:` line inside a block body is shell text, not a new step. An
+  empty value (e.g. `defaults: run: shell: bash`) is not a script.
+- **Shell lines:** comments dropped, `\` continuations joined (up to 20 lines),
+  split on `&&`, `||`, `;`, `|`; leading `sudo` and `NAME=value` dropped.
+- **Recognized commands:** `pip install`, `pip3 install`, `python -m pip install`,
+  `python3 -m pip install`, `pipx install`, `uv pip install`, `uv tool install`
+  (ecosystem `python`, names normalized as for requirements), `npm i`,
+  `npm install` (with or without `-g`/`--global`) and `npx <pkg>` (ecosystem
+  `npm`, names lowercased; for `npx` only the package, never the command's
+  arguments). Others (`poetry`, `yarn`, `pnpm`, `uvx`, `npm ci`, `npm add`, ...)
+  are ignored.
+- **Stored:** each static package as a dependency row with its specifier
+  (`==8.3`, `1.2.3`) and scope `ci-install:<workflow relative path>`, linked to
+  the workflow's evidence. Repeats in one file count as `duplicate_declaration`.
+- **Counted, never stored** (in `omitted_declarations`): `ci_install_dynamic`
+  (`$VAR`, `${{ }}`, `%VAR%`, backticks), `ci_install_requirements_file` (`-r`,
+  `-c`), `ci_install_local_or_url` (URLs, paths, archives, `-e`, `git+`,
+  `file:`), `ci_install_unsupported` (unparsed arguments, unbalanced quotes,
+  markers, names over 100 or specifiers over 80 characters, logical lines over
+  4096 characters) and `ci_install_over_limit` (beyond 50 rows per file).
+  Values of known value-taking options (`--index-url`, `--registry`, `--target`,
+  ...) are consumed and dropped, so credentials in them never reach the inventory.
+- **Gaps:** indirect installs (scripts, `make`, `tox`, `nox`, `pre-commit`,
+  Dockerfiles, `-r` files) are not followed; heredocs, PowerShell backtick
+  continuation and flow-style YAML are not handled; an unknown value-taking
+  option's value can be read as a package name if it looks like one.
+- **Rescan:** inventories scanned before this extraction need a rescan to gain
+  `ci-install:` rows; the schema is unchanged.
+
 ## Structural context rules (Azure Pipelines)
 
 To avoid classifying arbitrary YAML data as pipeline includes, `workflow_refs.py`

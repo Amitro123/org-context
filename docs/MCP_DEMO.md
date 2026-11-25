@@ -71,7 +71,13 @@ Code must be tested separately, not inferred from Linux/SDK tests.
 
 Python dependency-groups and root requirements-*.txt extraction are implemented.
 Workflow `uses:` extraction is lexical: quoted values are read; dynamic or
-unparsed values are counted in coverage, not stored. Project cards can also
+unparsed values are counted in coverage, not stored. Install commands in GitHub
+`run:` and Azure `script:`/`bash:`/`pwsh:` steps (`pip`/`pip3`/`python -m pip`,
+`pipx`, `uv pip`, `uv tool`, `npm i`/`install` and `npx`) are read lexically and
+never executed; static packages are found by `find_projects_using` with scope
+`ci-install:<workflow path>`, while variables, URLs, local paths, `-r` files and
+unparsed arguments are counted as `ci_install_*` reasons, not stored. Older
+inventories need a rescan to gain these rows. Project cards can also
 surface bounded lexical template and repository declarations from conventional
 root Azure pipeline YAML. These are local declarations, not evaluated YAML or
 deployed state. Actions search, workspace discovery, repository_root,
