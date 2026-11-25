@@ -14,6 +14,27 @@ Azure integrations. See [Product design](docs/PRODUCT_DESIGN.md) and [Roadmap](R
 The graph provides context; authorized tools retrieve live evidence; an external
 harness controls approvals and execution. Reduced iterations remain a hypothesis.
 
+## End-to-end architecture
+
+```mermaid
+flowchart LR
+    A["Approved local roots<br/>(repos & monorepo subdirs)"] --> B["Bounded scanner CLI<br/>(org_context.cli scan)"]
+    subgraph EXTRACT["Bounded local extraction (no network, no code execution)"]
+        B --> B1["Packages<br/>(pyproject, requirements, package.json)"]
+        B --> B2["CI refs<br/>(GitHub Actions & Azure Pipelines)"]
+        B --> B3["Capabilities (opt-in)<br/>(org-context.manifest.json)"]
+        B --> B4["Git & docs metadata<br/>(HEAD, git_root_relation, SHA256)"]
+    end
+    B1 & B2 & B3 & B4 --> C[("Local SQLite snapshot<br/>(projects, evidence, dependencies,<br/>capabilities, scan_coverage)")]
+    C --> D["Read-only stdio MCP server<br/>(org_context.mcp_server)"]
+    subgraph MCP["6 default metadata-only tools (+ opt-in read_evidence)"]
+        D --> T1["list_projects / project_card<br/>(single-snapshot, paged evidence)"]
+        D --> T2["find_projects_using / shared_dependencies"]
+        D --> T3["find_capabilities / get_reference_blueprint"]
+    end
+    T1 & T2 & T3 --> E["Coding agent<br/>(Cursor / Claude / IDE)<br/>+ optional discovery skill"]
+```
+
 ## Implemented local pilot
 
 The scanner now feeds a read-only stdio MCP server directly through SQLite.
