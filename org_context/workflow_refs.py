@@ -7,6 +7,11 @@ _TOKEN = r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}'
 _ALIAS = re.compile(_TOKEN)
 _REPO = re.compile(rf'{_TOKEN}(?:/{_TOKEN}){{0,2}}')
 _FILE = re.compile(rf'(?:\./|/)?(?:{_TOKEN}/)*{_TOKEN}\.ya?ml(?:@{_TOKEN})?')
+_ITEM = re.compile(r'(-)(?:[ \t]+|$)')
+_SIMPLE_FIELD = re.compile(r'(?:([A-Za-z][A-Za-z0-9_-]*)|(["\'])([A-Za-z][A-Za-z0-9_-]*)\2):[ \t]*(.*)')
+_GENERIC_FIELD = re.compile(r'(.+?):(?:[ \t]+(.*)|[ \t]*)')
+_CONDITIONAL_KEY = re.compile(r'\$\{\{\s*(?:(?:if|elseif|each)\b[^}\r\n]{0,200}|else\s*)\}\}')
+_BLOCK_SCALAR = re.compile(r'[|>][+\-1-9]{0,2}')
 _TEMPLATE_SECTIONS = {'stages', 'jobs', 'steps', 'variables'}
 _TEMPLATE_ANCESTORS = {
     'stages', 'jobs', 'steps', 'variables',
@@ -14,6 +19,8 @@ _TEMPLATE_ANCESTORS = {
     'preDeploy', 'deploy', 'routeTraffic', 'postRouteTraffic',
     'on', 'success', 'failure',
 }
+_CONDITIONAL_PARENT = '__conditional__'
+_UNSUPPORTED_PARENT = '__unsupported__'
 
 
 def _scalar(value):
@@ -27,10 +34,11 @@ def _unquote(value):
 
 
 def _is_supported_template_context(item, chain):
+    effective = [parent for parent in chain if parent != _CONDITIONAL_PARENT]
     if not item:
-        return chain == ['extends']
-    return bool(chain) and chain[-1] in _TEMPLATE_SECTIONS and all(
-        parent in _TEMPLATE_ANCESTORS for parent in chain
+        return effective == ['extends']
+    return bool(effective) and effective[-1] in _TEMPLATE_SECTIONS and all(
+        parent in _TEMPLATE_ANCESTORS for parent in effective
     )
 
 
@@ -62,20 +70,44 @@ def pipeline_metadata(text):
             if indent > block_indent:
                 continue
             block_indent = None
-        field = re.fullmatch(r' *(?:(-)[ ]+)?([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*)', line)
-        if field is None:
-            continue
-        item, key, raw = field.groups()
-        value = _scalar(raw)
-        is_block_scalar = bool(re.fullmatch(r'[|>][+\-1-9]{0,2}', value))
-        if is_block_scalar:
-            # For "- script: |" the content is indented beyond the key.
-            block_indent = field.start(2)
+
+        stripped = line[indent:]
+        item_match = _ITEM.match(stripped)
+        item = '-' if item_match else None
+        rest = stripped[item_match.end():] if item_match else stripped
+        key_col = indent + (item_match.end() if item_match else 0)
+
+        # Always update indentation and sequence-item boundaries, even for lines
+        # whose mapping keys are not directly extractable (e.g. ${{ if ... }}:).
         while parents and (indent < parents[-1][0] or
                            (indent == parents[-1][0] and not item)):
             parents.pop()
         if repository is not None and indent <= repository[0]:
             repository = None
+
+        field = _SIMPLE_FIELD.fullmatch(rest)
+        if field is None:
+            generic = _GENERIC_FIELD.fullmatch(rest)
+            if generic is not None:
+                raw_key = generic.group(1).strip()
+                value = _scalar(generic.group(2) or '')
+                if _BLOCK_SCALAR.fullmatch(value):
+                    block_indent = key_col
+                elif not value:
+                    parent_key = (
+                        _CONDITIONAL_PARENT
+                        if _CONDITIONAL_KEY.fullmatch(raw_key)
+                        else _UNSUPPORTED_PARENT
+                    )
+                    parents.append((key_col if item else indent, parent_key))
+            continue
+
+        key = field.group(1) or field.group(3)
+        value = _scalar(field.group(4))
+        is_block_scalar = bool(_BLOCK_SCALAR.fullmatch(value))
+        if is_block_scalar:
+            # For "- script: |" the content is indented beyond the key.
+            block_indent = key_col
         chain = [entry[1] for entry in parents]
         value = _unquote(value)
         if key == 'template':
@@ -86,7 +118,7 @@ def pipeline_metadata(text):
                     omitted += 1
             elif item:
                 # Explicitly count list-style template keys in unsupported contexts
-                # (such as parameters.default object data) without asserting them.
+                # (such as parameters object data) without asserting them.
                 omitted += 1
         elif item and key == 'repository' and chain == ['resources', 'repositories']:
             if _ALIAS.fullmatch(value):
@@ -95,11 +127,11 @@ def pipeline_metadata(text):
                 omitted += 1
         elif repository and not item and key == 'name' and chain == ['resources', 'repositories']:
             # Name must be a sibling property of the current list item.
-            if field.start(2) == repository[0] + 2 and _REPO.fullmatch(value):
+            if key_col == repository[0] + 2 and _REPO.fullmatch(value):
                 emit({'kind': 'repository', 'alias': repository[1], 'reference': value})
             else:
                 omitted += 1
             repository = None
         if not value and not is_block_scalar:
-            parents.append((field.start(2) if item else indent, key))
+            parents.append((key_col if item else indent, key))
     return {'semantics': SEMANTICS, 'references': refs, 'omitted_or_over_limit': omitted}

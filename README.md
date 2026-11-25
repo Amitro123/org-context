@@ -65,7 +65,11 @@ Governance/Security/Eval gate or a production dependency.
   declarations only. No Azure/DevOps connection, template expansion, or run lookup.
   `project_card` exposes constrained references on workflow evidence (up to 20
   per file), without exposing evidence bodies; rescan old inventories for this
-  metadata.
+  metadata. Structural context rules exclude `parameters` object data and
+  unsupported mapping subtrees (plain or quoted keys) while preserving static
+  declarations inside `${{ if/elseif/else/each }}` blocks without evaluating
+  conditions. See [bounded workflow extraction](docs/WORKFLOW_EXTRACTION.md) for
+  supported contexts and known YAML gaps.
 - .claude-plugin/plugin.json and marketplace.json, and
   plugins/*/.claude-plugin/plugin.json or plugins/*/plugin.json: selected string
   metadata and marketplace plugin names, not all plugin configuration.
