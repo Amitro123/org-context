@@ -179,7 +179,7 @@ class SkillScanTests(TestCase):
         if isinstance(text, bytes):
             p.write_bytes(text)
         else:
-            p.write_text(text, encoding='utf-8')
+            p.write_text(text, encoding='utf-8', newline='\n')
         return p
 
     def _ctx(self):
@@ -317,7 +317,7 @@ class SkillScanTests(TestCase):
         real_read = os.read
         real_open = os.open
         opened = []
-        root_text = str(self.root)
+        root_text = os.path.normcase(os.path.realpath(self.root))
 
         def spy_read(fd, n):
             data = real_read(fd, n)
@@ -327,7 +327,7 @@ class SkillScanTests(TestCase):
 
         def spy_open(path, flags, *a, **k):
             fd = real_open(path, flags, *a, **k)
-            if str(path).startswith(root_text):
+            if os.path.normcase(os.path.realpath(path)).startswith(root_text):
                 opened.append(str(path))
                 reads[fd] = 0
             return fd
