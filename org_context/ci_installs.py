@@ -40,10 +40,23 @@ _PIP_VALUE = {
     '--implementation', '--abi', '--cache-dir', '--log', '--proxy', '--retries', '--timeout',
     '--cert', '--client-cert', '--exists-action', '--no-binary', '--only-binary',
     '--upgrade-strategy', '--progress-bar', '-C', '--config-settings', '--python', '-p',
+    '--username', '--password', '--keyring-provider', '--root-user-action', '--use-feature',
+    '--report', '--global-option', '--install-option', '--index-strategy', '--resolution',
+    '--prerelease', '--exclude-newer', '--extra', '--group', '--reinstall-package',
+    '--upgrade-package', '-P', '--default-index', '--index',
 }
 _PIPX_VALUE = {'--python', '--pip-args', '--suffix', '--index-url', '--spec'}
-_UV_TOOL_VALUE = {'--python', '-p', '--with', '--with-requirements', '--index-url', '--extra-index-url', '--from'}
-_NPM_VALUE = {'--registry', '--prefix', '--tag', '-w', '--workspace', '--cache', '--userconfig'}
+_UV_TOOL_VALUE = {
+    '--python', '-p', '--with', '--with-requirements', '--index-url', '--extra-index-url', '--from',
+    '--index-strategy', '--resolution', '--prerelease', '--keyring-provider', '--default-index',
+    '--index', '--exclude-newer',
+}
+_NPM_VALUE = {
+    '--registry', '--prefix', '--tag', '-w', '--workspace', '--cache', '--userconfig',
+    '--globalconfig', '--_authToken', '--_auth', '--otp', '--auth-type', '--loglevel',
+    '--omit', '--include', '--location', '--install-strategy', '--before', '--scope',
+    '--audit-level', '--cafile', '--ca', '--proxy', '--https-proxy', '--fetch-retries',
+}
 
 # (prefix tokens, ecosystem, command kind)
 _COMMANDS = (
@@ -127,7 +140,8 @@ def _segments(line):
         elif ch in '"\'':
             quote = ch
             buf.append(ch)
-        elif ch in ';|' or line.startswith('&&', i):
+        elif (ch in ';|' or line.startswith('&&', i)
+              or (ch == '&' and line[i - 1:i] not in ('>', '<') and line[i + 1:i + 2] != '>')):
             out.append(''.join(buf))
             buf = []
             if line.startswith(('&&', '||'), i):
@@ -139,9 +153,19 @@ def _segments(line):
     return out
 
 
+_REDIRECT = re.compile(r'(?:\d*|&)(?:>>?|<)(?:&\d+|[^<>\s]*)')
+_REDIRECT_BARE = re.compile(r'(?:\d*|&)(?:>>?|<|>&)')
+
+
 def _tokens(segment):
-    tokens, unbalanced = [], False
+    tokens, unbalanced, skip = [], False, False
     for tok in segment.split():
+        if skip:
+            skip = False
+            continue
+        if _REDIRECT.fullmatch(tok):
+            skip = _REDIRECT_BARE.fullmatch(tok) is not None
+            continue
         if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in '"\'' and tok.count(tok[0]) == 2:
             tok = tok[1:-1]
         elif tok.count('"') % 2 or tok.count("'") % 2:
@@ -158,7 +182,7 @@ def _classify(token, eco, notes):
     local = ('://' in token or token.startswith(('.', '/', '~', '\\')) or '\\' in token
              or token.endswith(('.whl', '.tar.gz', '.zip', '.tgz')))
     if eco == 'npm':
-        local = local or token.startswith(('file:', 'link:', 'git', 'github:', 'workspace:', 'http'))
+        local = local or token.startswith(('file:', 'link:', 'git+', 'git:', 'github:', 'workspace:', 'http:', 'https:'))
     else:
         local = local or '/' in token or '@' in token
     if local:
@@ -193,7 +217,11 @@ def _segment_packages(segment, notes, labels=()):
     if tokens and tokens[0] in labels:
         tokens = tokens[1:]
     while tokens and (tokens[0] == 'sudo' or _ENV_ASSIGN.match(tokens[0])):
+        was_sudo = tokens[0] == 'sudo'
         tokens = tokens[1:]
+        while was_sudo and tokens and tokens[0].startswith('-'):
+            flag = tokens[0]
+            tokens = tokens[2:] if flag in ('-u', '-g', '-C', '-h', '-p') else tokens[1:]
     for prefix, eco, kind in _COMMANDS:
         if tuple(tokens[:len(prefix)]) == prefix:
             break

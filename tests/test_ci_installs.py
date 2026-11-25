@@ -80,6 +80,17 @@ class ExtractorTests(unittest.TestCase):
         rows,_=extract(many)
         self.assertLessEqual(len(rows),31);self.assertEqual(rows[0][1],'a')
 
+    def test_review_followups(self):
+        rows,notes=extract(steps('npm i -g --_authToken npm_SECRETx pkg','pip install --password PW9 --username u1 z'))
+        self.assertEqual(names(rows),[('npm','pkg',''),('python','z','')])
+        self.assertNotIn('secretx',json.dumps(rows).lower())
+        rows,notes=extract(steps('npm i -g http-server gitmoji-cli','npm i git+https://h/r','npm i http://h/p.tgz'))
+        self.assertEqual(names(rows),[('npm','http-server',''),('npm','gitmoji-cli','')])
+        self.assertEqual(notes['ci_install_local_or_url'],2)
+        rows,notes=extract(steps('pip install a & npm i b','pip install foo 1>log 2>&1','pip install bar > out.txt','sudo -E pip install s1','sudo -H -u root npm i s2','npm install --loglevel error x','pip install --root-user-action ignore y'))
+        self.assertEqual(names(rows),[('python','a',''),('npm','b',''),('python','foo',''),('python','bar',''),('python','s1',''),('npm','s2',''),('npm','x',''),('python','y','')])
+        self.assertEqual(sum(notes.values()),0)
+
     def test_never_raises(self):
         for text in ('','run:','run: |','run: "','- run: \'pip install','run: pip install "a b"','\x00run: pip\x00 install','run: '+'\\'*10000,'run: |\n'+'  pip install \\\n'*100,'run: pip install [x]','run: npm i @','run: npx -p'):
             rows,_=extract(text)
