@@ -4,6 +4,7 @@ import json
 import sys
 from . import __version__
 from .inventory_context import Context,EVIDENCE_KINDS
+from .capabilities import CAPABILITY_TOOL,find_capabilities
 from .evidence_pages import READ_TOOL,read_evidence,add_scan_root
 from .discovery import DISCOVERY_TOOLS,NAMES as DISCOVERY_NAMES,PAGING,call as discovery_call,snapshot
 VERSION='2025-03-26'
@@ -16,6 +17,7 @@ TOOLS=[
  {'name':'get_reference_blueprint','description':'Read a synthetic reference; real scanned projects return not_available unless a reference is separately supported.','inputSchema':PROJECT_SCHEMA}]
 TOOLS.append({'name':'find_projects_using','description':'Find declared package dependencies in scanned inventory; not proof of runtime use.','inputSchema':{'type':'object','properties':{'technology':{'type':'string','minLength':1,'maxLength':160},'ecosystem':{'type':'string','enum':['python','npm']},**PAGING},'required':['technology'],'additionalProperties':False}})
 TOOLS.extend(DISCOVERY_TOOLS)
+TOOLS.append(CAPABILITY_TOOL)
 
 def error(rid,code,message): return {'jsonrpc':'2.0','id':rid,'error':{'code':code,'message':message}}
 
@@ -52,6 +54,7 @@ class Session:
             if not isinstance(arguments,dict): return error(rid,-32602,'arguments must be an object')
             try:
                 if name in DISCOVERY_NAMES: result=discovery_call(self.context,name,arguments)
+                elif name=='find_capabilities': result=find_capabilities(self.context,arguments)
                 elif name=='read_evidence': result=read_evidence(self.context,arguments)
                 elif name=='project_card' and getattr(self.context,'db',None) is not None:
                     with snapshot(self.context.db):

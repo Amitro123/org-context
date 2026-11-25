@@ -9,9 +9,10 @@ import re
 import sqlite3
 import subprocess
 import tomllib
+from .capabilities import MANIFEST_FILENAME, parse_capability_manifest
 from .workflow_refs import pipeline_metadata
 
-ALLOWED=('README','README.md','README.rst','README.txt','pyproject.toml','requirements.txt','package.json','CLAUDE.md','CODEOWNERS','.github/CODEOWNERS','docs/CODEOWNERS','.claude-plugin/plugin.json','.claude-plugin/marketplace.json')
+ALLOWED=('README','README.md','README.rst','README.txt','pyproject.toml','requirements.txt','package.json','CLAUDE.md','CODEOWNERS','.github/CODEOWNERS','docs/CODEOWNERS','.claude-plugin/plugin.json','.claude-plugin/marketplace.json',MANIFEST_FILENAME)
 PIPELINE_PATTERNS=('azure-pipelines.yml','azure-pipelines.yaml','azure-pipelines-*.yml','azure-pipelines-*.yaml')
 PATTERNS=('requirements-*.txt','.github/workflows/*.yml','.github/workflows/*.yaml','plugins/*/.claude-plugin/plugin.json','plugins/*/plugin.json',*PIPELINE_PATTERNS)
 UNSUPPORTED=('lockfiles','nested package discovery','workspace member discovery','full YAML semantics','CODEOWNERS matching semantics','OpenAPI/IaC analysis','requirements include expansion','environment-marker evaluation','dependency-group include expansion')
@@ -28,12 +29,15 @@ def digest(text):
 def connect(path):
     db=sqlite3.connect(path); db.row_factory=sqlite3.Row
     db.execute('PRAGMA foreign_keys=ON')
+    existing={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     db.executescript("""
     CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT,root TEXT UNIQUE,commit_sha TEXT,scanned_at TEXT);
     CREATE TABLE IF NOT EXISTS evidence(id TEXT PRIMARY KEY,project_id TEXT REFERENCES projects(id),path TEXT,sha256 TEXT,kind TEXT,method TEXT,content TEXT);
     CREATE TABLE IF NOT EXISTS dependencies(project_id TEXT REFERENCES projects(id),ecosystem TEXT,name TEXT,specification TEXT,scope TEXT,evidence_id TEXT REFERENCES evidence(id),UNIQUE(project_id,ecosystem,name,scope,evidence_id,specification));
     CREATE TABLE IF NOT EXISTS scan_coverage(project_id TEXT PRIMARY KEY REFERENCES projects(id),payload TEXT NOT NULL);
     """)
+    if not existing:
+        db.execute("CREATE TABLE IF NOT EXISTS capabilities(project_id TEXT REFERENCES projects(id),component TEXT NOT NULL,role TEXT NOT NULL,capability_id TEXT NOT NULL,summary TEXT NOT NULL,responsibility TEXT NOT NULL,payload TEXT NOT NULL,evidence_id TEXT REFERENCES evidence(id),PRIMARY KEY(project_id,capability_id))")
     return db
 
 def _migrate_dependency_specs(db):
@@ -175,7 +179,7 @@ def scan(db,supplied):
     if path.is_symlink(): raise ValueError('Root symlinks are not accepted')
     root=path.resolve(strict=True)
     if not root.is_dir(): raise ValueError('Root must be a directory')
-    pid=digest(str(root)); records=[]; deps=[]; skipped=[]; checked=[]; missing=[]; omitted=[]; structures=[]; workflow_refs={}
+    pid=digest(str(root)); records=[]; deps=[]; caps=[]; skipped=[]; checked=[]; missing=[]; omitted=[]; structures=[]; workflow_refs={}
     candidates=[root/n for n in ALLOWED]
     for pattern in PATTERNS:
         for p in root.glob(pattern):
@@ -212,6 +216,9 @@ def scan(db,supplied):
             elif '/' not in name and name.startswith('azure-pipelines') and name.endswith(('.yml','.yaml')):
                 kind='workflow'; method='bounded_lexical_extraction'
                 workflow_refs[name]=pipeline_metadata(text)
+            elif name==MANIFEST_FILENAME:
+                caps.extend((pid,*c,eid) for c in parse_capability_manifest(root,text,max_file_bytes=MAX_BYTES,error_cls=SourceFormatError))
+                content=None; kind='capability_manifest'; method='structured_parser'
             elif name.endswith('CODEOWNERS') or name=='CLAUDE.md' or name.startswith('README'):
                 content=text; kind='unverified_document'; method='reference_text'
         except SourceFormatError as exc:
@@ -232,13 +239,16 @@ def scan(db,supplied):
     with db:
         if not db.in_transaction: db.execute('BEGIN')
         _migrate_dependency_specs(db)
+        db.execute('CREATE TABLE IF NOT EXISTS capabilities(project_id TEXT REFERENCES projects(id),component TEXT NOT NULL,role TEXT NOT NULL,capability_id TEXT NOT NULL,summary TEXT NOT NULL,responsibility TEXT NOT NULL,payload TEXT NOT NULL,evidence_id TEXT REFERENCES evidence(id),PRIMARY KEY(project_id,capability_id))')
+        db.execute('DELETE FROM capabilities WHERE project_id=?',(pid,))
         db.execute('DELETE FROM dependencies WHERE project_id=?',(pid,))
         db.execute('DELETE FROM evidence WHERE project_id=?',(pid,))
         db.execute('INSERT INTO projects VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,commit_sha=excluded.commit_sha,scanned_at=excluded.scanned_at',(pid,root.name,str(root),commit(root),datetime.now(timezone.utc).isoformat()))
         db.executemany('INSERT INTO evidence VALUES(?,?,?,?,?,?,?)',records)
         db.executemany('INSERT INTO dependencies VALUES(?,?,?,?,?,?)',deps)
+        db.executemany('INSERT INTO capabilities VALUES(?,?,?,?,?,?,?,?)',caps)
         db.execute('INSERT OR REPLACE INTO scan_coverage VALUES(?,?)',(pid,json.dumps(coverage)))
-    return {'project_id':pid,'name':root.name,'evidence_count':len(records),'dependency_count':len(deps),'declaration_count':declaration_count,'skipped':skipped,'coverage':coverage}
+    return {'project_id':pid,'name':root.name,'evidence_count':len(records),'dependency_count':len(deps),'declaration_count':declaration_count,'capability_count':len(caps),'skipped':skipped,'coverage':coverage}
 
 def show(db,value):
     rows=db.execute('SELECT * FROM projects WHERE id=? OR name=?',(value,value)).fetchall()

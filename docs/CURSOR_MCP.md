@@ -28,7 +28,7 @@ In Cursor's project-local MCP configuration, adapt the following paths:
 
 On Windows use absolute Windows paths and escape backslashes in JSON. Restart
 the MCP server and confirm it lists only approved roots. Confirm the default set
-has five tools, no `read_evidence`, and `project_card` shows metadata and
+has six tools, no `read_evidence`, and `project_card` shows metadata and
 `freshness: unknown` without document excerpts. Omit `--evidence-pages` for this
 pilot. Verify the Cursor client's own data handling before using it with internal
 metadata; a local server does not control what a client sends to its model.

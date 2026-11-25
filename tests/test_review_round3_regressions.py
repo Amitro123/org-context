@@ -209,7 +209,7 @@ class EvidencePaginationTests(TestCase):
         session = _init_session(self.ctx)
         # Verify tool schema exposes evidence paging/filter controls while keeping 5 default tools.
         tools = session.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})['result']['tools']
-        self.assertEqual(len(tools), 5)
+        self.assertEqual(len(tools), 6)
         card_tool = next(t for t in tools if t['name'] == 'project_card')
         for prop in ('evidence_offset', 'evidence_limit', 'evidence_kind', 'evidence_path'):
             self.assertIn(prop, card_tool['inputSchema']['properties'])
