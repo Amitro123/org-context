@@ -6,7 +6,7 @@ import sqlite3
 from .discovery import SNAPSHOT_LIMITS, call as discovery_call, snapshot
 from .reference import Context as ReferenceContext
 
-EVIDENCE_KINDS=('manifest','workflow','plugin_manifest','unverified_document','capability_manifest')
+EVIDENCE_KINDS=('manifest','workflow','plugin_manifest','unverified_document','capability_manifest','skill_frontmatter')
 CARD_ARGS={'project_id','evidence_offset','evidence_limit','evidence_kind','evidence_path'}
 
 def _parse_evidence_args(arguments):
