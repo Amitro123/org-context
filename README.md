@@ -81,9 +81,26 @@ Governance/Security/Eval gate or a production dependency.
   pyproject.toml and package.json.
 - CODEOWNERS at root, .github or docs: retained as reference text; ownership
   matching is NOT evaluated.
-- .github/workflows/*.yml and *.yaml: lexical `uses:` references only, not full
-  YAML semantics, scripts, triggers, permissions or execution status. Quoted values
+- .github/workflows/*.yml and *.yaml: lexical `uses:` references, not full
+  YAML semantics, triggers, permissions or execution status. Quoted values
   are read; dynamic `${{ }}` and unparsed values are counted in coverage, not stored.
+- CI install commands: the shell text of GitHub `run:` steps and Azure
+  `script:` / `bash:` / `pwsh:` steps (in the workflow files above) is read
+  lexically, never executed or evaluated, for `pip install`, `pip3 install`,
+  `python -m pip install`, `python3 -m pip install`, `pipx install`,
+  `uv pip install`, `uv tool install`, `npm i` / `npm install` (with or without
+  `-g`) and `npx <pkg>` (the package only, never its arguments). Each static
+  package is stored as a `python` or `npm` dependency with scope
+  `ci-install:<workflow path>` and its version specifier, so
+  `find_projects_using` finds it. Values of known value-taking options
+  (`--index-url`, `--registry`, ...) are dropped; variables, `${{ }}`, URLs,
+  local paths, `-r`/`-c` requirement files and unparsed arguments are counted
+  in `omitted_declarations` as `ci_install_dynamic`, `ci_install_local_or_url`,
+  `ci_install_requirements_file`, `ci_install_unsupported` and (beyond 50 rows
+  per file, or lines over 4096 characters) `ci_install_over_limit` /
+  `ci_install_unsupported`, never stored. Scripts, `make`/`tox`/`pre-commit`,
+  Dockerfiles, `-r` files and other package managers are not followed.
+  Inventories scanned before this change need a rescan to gain `ci-install:` rows.
 - Conventional root `azure-pipelines.yml` / `.yaml` and `azure-pipelines-*`
   YAML files: bounded lexical `template:` and simple `resources.repositories`
   declarations only. No Azure/DevOps connection, template expansion, or run lookup.

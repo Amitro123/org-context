@@ -11,14 +11,14 @@ import subprocess
 import tomllib
 from .capabilities import MANIFEST_FILENAME, parse_capability_manifest
 from .workflow_refs import pipeline_metadata
+from .ci_installs import NPM_NAME, SPEC, ci_install_declarations, normalize
 
 ALLOWED=('README','README.md','README.rst','README.txt','pyproject.toml','requirements.txt','package.json','CLAUDE.md','CODEOWNERS','.github/CODEOWNERS','docs/CODEOWNERS','.claude-plugin/plugin.json','.claude-plugin/marketplace.json',MANIFEST_FILENAME)
 PIPELINE_PATTERNS=('azure-pipelines.yml','azure-pipelines.yaml','azure-pipelines-*.yml','azure-pipelines-*.yaml')
 PATTERNS=('requirements-*.txt','.github/workflows/*.yml','.github/workflows/*.yaml','plugins/*/.claude-plugin/plugin.json','plugins/*/plugin.json',*PIPELINE_PATTERNS)
-UNSUPPORTED=('lockfiles','nested package discovery','workspace member discovery','full YAML semantics','CODEOWNERS matching semantics','OpenAPI/IaC analysis','requirements include expansion','environment-marker evaluation','dependency-group include expansion')
+UNSUPPORTED=('lockfiles','nested package discovery','workspace member discovery','full YAML semantics','CODEOWNERS matching semantics','OpenAPI/IaC analysis','requirements include expansion','environment-marker evaluation','dependency-group include expansion','CI script execution and indirect installs')
 MAX_BYTES=256000
 MAX_FILES=128
-SPEC=re.compile(r'([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,.-]+\])?\s*([<>=!~][A-Za-z0-9.*<>=!~,+ -]+)?')
 
 class SourceFormatError(ValueError):
     """Safe, content-free error raised for malformed source declarations."""
@@ -81,9 +81,6 @@ def commit(root):
         return value if re.fullmatch(r'[0-9a-f]{40,64}',value) else None
     except (OSError,subprocess.SubprocessError):
         return None
-
-def normalize(name):
-    return re.sub(r'[-_.]+','-',name).lower()
 
 def git_root_info(root):
     try:
@@ -158,10 +155,14 @@ def parse_with_notes(name,text):
         if not isinstance(doc,dict): raise SourceFormatError('package.json must be an object')
         for scope in ('dependencies','devDependencies','peerDependencies','optionalDependencies'):
             for package,spec in require_table(doc.get(scope,{}),scope).items():
-                if isinstance(spec,str) and re.fullmatch(r'@?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?',package) and re.fullmatch(r'[A-Za-z0-9.*^~<>=|+ -]{0,160}',spec): result.append(('npm',package.lower(),spec,scope))
+                if isinstance(spec,str) and NPM_NAME.fullmatch(package) and re.fullmatch(r'[A-Za-z0-9.*^~<>=|+ -]{0,160}',spec): result.append(('npm',package.lower(),spec,scope))
                 elif isinstance(spec,str) and ('://' in spec or spec.startswith(('file:','link:','git','github:','workspace:'))): notes['direct_reference']+=1
                 else: notes['unsupported_expression']+=1
         if 'workspaces' in doc: structures.append({'structure':'npm workspaces','reason':'workspace members are not discovered'})
+    elif name.startswith('.github/workflows/') and name.endswith(('.yml','.yaml')):
+        result.extend(ci_install_declarations(text,'github','ci-install:'+name,notes))
+    elif '/' not in name and name.startswith('azure-pipelines') and name.endswith(('.yml','.yaml')):
+        result.extend(ci_install_declarations(text,'azure','ci-install:'+name,notes))
     return result,notes,structures
 
 def parse(name,text):
