@@ -71,10 +71,52 @@ Synthetic example (placeholders only):
 - Referenced local files are checked strictly within the scan root for existence and optional SHA256 (when `<= 256 KB`), producing `observed_local_file`, `observed_local_file_over_size_limit`, `missing_file`, or `not_a_file`. Referenced file bodies are **never** stored or returned.
 - Declared `symbol` values always report `symbol_status: "declared_only_not_resolved"`.
 
+### Second source: Claude Code skill and agent frontmatter
+
+Repositories that already describe their skills do not need a manifest. During `scan`, these
+files (and only these) under the scan root are read:
+
+| Pattern | Role | Component |
+|---|---|---|
+| `skills/*/SKILL.md` | `skill` | scan root name |
+| `plugins/*/skills/*/SKILL.md` | `skill` | the `<plugin>` directory name |
+| `agents/*.md` | `agent` | scan root name |
+
+Only the YAML frontmatter block between the first two `---` lines is parsed (a bounded subset of
+YAML, no dependency), and only three keys are kept: `name` (becomes `capability_id`, must match the
+lowercase slug syntax `^[a-z0-9][a-z0-9._-]{0,63}$`), `description` (becomes `summary`, required,
+`<= 1024` chars) and `when_to_use` (becomes `responsibility`, optional, `<= 1024` chars). Other keys
+(`allowed-tools`, `model`, `metadata`, ...) are ignored. Values are whitespace-normalized to one line;
+control characters and bidi controls are rejected, never truncated. Plain, single-quoted,
+double-quoted and `|` / `>` block scalars are accepted; flow collections, anchors, tags and
+indentation digits are not.
+
+The skill body (everything after the closing `---`), its scripts and references are never decoded,
+stored, hashed or returned. Each row's evidence has kind `skill_frontmatter`, method
+`bounded_frontmatter_parser`, `content` NULL, and `sha256` over the bytes from the start of the file
+through the closing delimiter line. The single entry point is the file itself with
+`path_status: "observed_local_file_frontmatter_only"` and `file_sha256: null`.
+
+Limits (per scan root, separate from the main scan's file and byte limits, so they never fail it):
+
+- at most `16384` bytes read per file (one extra byte to detect overflow) and `200` frontmatter lines;
+- at most `256` candidate paths collected (`truncated: true` beyond that) and `64` files read.
+
+A file that cannot be used is skipped, never failing the root scan. Skips are recorded in
+`scan_coverage.skill_frontmatter` (`candidates_found`, `indexed`, `skipped` listing at most 64
+`{path, reason}` entries, `skipped_count`, `skipped_by_reason`, `truncated`, `limits`). Skip reasons:
+`invalid_path`, `symlink` (any symlink on the path; the target is not opened), `not_a_file`,
+`read_error`, `no_frontmatter`, `malformed_frontmatter`, `frontmatter_too_large`, `missing_name`,
+`invalid_name`, `missing_description`, `invalid_field`, `duplicate_capability_id` (a manifest
+capability with that id wins; otherwise the lexically first path wins), `file_limit`.
+
+An invalid `org-context.manifest.json` still fails the whole root scan, skills included.
+
 ## 3. MCP tool: `find_capabilities`
 
 `find_capabilities(query, role?, project_id?, offset?, limit?)`:
 - Deterministic case-insensitive token matching over `capability_id`, `component`, `role`, `summary`, `responsibility`, and entrypoint/reference paths and symbols.
 - Executes within one SQLite read snapshot (`SAVEPOINT`), ordered deterministically by `project_id, capability_id` (`limit` `1..20`, default `20`).
 - Returns `manifest_evidence` (manifest path and SHA256, distinct from referenced `file_sha256`), `git_root_relation` / `git_relative_prefix` (preserving monorepo subdirectory identity), `snapshot`, `out_of_scope`, and explicit no-match coverage limits.
+- Each result has `declaration_source`: `capability_manifest` or `declared_skill_frontmatter`. Skill rows keep the same shape (`manifest_evidence` points at the SKILL.md path with kind `skill_frontmatter`) and carry `declaration_semantics` stating that the labels are the skill author's untrusted data and that the body was not read. Filter with `role: "skill"` or `role: "agent"`.
 - Legacy SQLite databases without the `capabilities` table still open and return `results: []` with `unknowns: ["Legacy inventory has no capabilities table; rescan required"]`.

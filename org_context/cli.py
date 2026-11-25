@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import tomllib
 from .capabilities import MANIFEST_FILENAME, parse_capability_manifest
+from . import skill_frontmatter
 from .workflow_refs import pipeline_metadata
 from .ci_installs import NPM_NAME, SPEC, ci_install_declarations, normalize
 
@@ -230,13 +231,22 @@ def scan(db,supplied):
         deps.extend((pid,*d,eid) for d in extracted)
         omitted.extend({'path':name,'reason':reason,'count':count} for reason,count in sorted(notes.items()))
         structures.extend({'path':name,**item} for item in found)
+    skill_decls,skill_coverage=skill_frontmatter.collect_skill_declarations(root,{c[3] for c in caps},safe)
+    for decl in skill_decls:
+        sha=decl['frontmatter_sha256']; eid=digest(pid+':'+decl['path']+':'+sha)
+        records.append((eid,pid,decl['path'],sha,skill_frontmatter.EVIDENCE_KIND,skill_frontmatter.EVIDENCE_METHOD,None))
+        checked.append(decl['path'])
+        payload={'source':skill_frontmatter.DECLARATION_SOURCE,
+                 'entrypoints':[{'path':decl['path'],'path_status':'observed_local_file_frontmatter_only','file_sha256':None,'symbol':None,'symbol_status':None}],
+                 'references':[],'out_of_scope':[]}
+        caps.append((pid,decl['component'],decl['role'],decl['capability_id'],decl['summary'],decl['responsibility'],json.dumps(payload,ensure_ascii=True),eid))
     declaration_count=len(deps)
     evidence_paths={row[0]:row[2] for row in records}
     for declaration,count in Counter(deps).items():
         if count>1:
             omitted.append({'path':evidence_paths[declaration[-1]],'reason':'duplicate_declaration','count':count-1})
     deps=list(dict.fromkeys(deps))
-    coverage={'dependency_schema_version':1,**git_root_info(root),'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'omitted_declarations':omitted,'partial_structures':structures,'unsupported':list(UNSUPPORTED),'not_checked':['runtime state','actual permissions','remote freshness'],'workflow_references_by_path':workflow_refs}
+    coverage={'dependency_schema_version':1,**git_root_info(root),'checked':checked,'skipped':skipped,'absent_candidates':missing,'patterns_checked':list(PATTERNS),'omitted_declarations':omitted,'partial_structures':structures,'unsupported':list(UNSUPPORTED),'not_checked':['runtime state','actual permissions','remote freshness'],'workflow_references_by_path':workflow_refs,'skill_frontmatter':skill_coverage}
     with db:
         if not db.in_transaction: db.execute('BEGIN')
         _migrate_dependency_specs(db)
