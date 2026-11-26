@@ -57,6 +57,9 @@ def _require_text(value, label, max_len, error_cls):
 
 
 def _validate_relpath(raw, label, error_cls):
+    # Path identity is exact: stripping would make ' code.py' observe a different file.
+    if isinstance(raw, str) and raw != raw.strip():
+        raise error_cls(f'{label} must not start or end with whitespace')
     path_text = _require_text(raw, label, 256, error_cls)
     if path_text.startswith(('/', '\\')) or '\\' in path_text or ':' in path_text:
         raise error_cls(f'{label} must be a relative POSIX path inside the scan root')
@@ -66,7 +69,7 @@ def _validate_relpath(raw, label, error_cls):
     return path_text
 
 
-def _observe_local_path(root, rel_path, label, *, max_file_bytes, error_cls):
+def _observe_local_path(root, rel_path, label, *, max_file_bytes, error_cls, budget=None):
     target = root.joinpath(*rel_path.split('/'))
     current = root
     for part in rel_path.split('/'):
@@ -83,14 +86,25 @@ def _observe_local_path(root, rel_path, label, *, max_file_bytes, error_cls):
         return 'missing_file', None
     if not target.is_file():
         return 'not_a_file', None
+    # Each referenced file is read once per scan and its bytes count against the scan budget.
+    seen = budget['seen'] if budget is not None else {}
+    if rel_path in seen:
+        return seen[rel_path]
     with target.open('rb') as handle:
         raw = handle.read(max_file_bytes + 1)
+    if budget is not None:
+        budget['used'] += len(raw)
+        if budget['used'] > budget['limit']:
+            raise error_cls('manifest references exceed the scan size budget')
     if len(raw) > max_file_bytes:
-        return 'observed_local_file_over_size_limit', None
-    return 'observed_local_file', hashlib.sha256(raw).hexdigest()
+        result = ('observed_local_file_over_size_limit', None)
+    else:
+        result = ('observed_local_file', hashlib.sha256(raw).hexdigest())
+    seen[rel_path] = result
+    return result
 
 
-def parse_capability_manifest(root, text, *, max_file_bytes=256000, error_cls=ValueError):
+def parse_capability_manifest(root, text, *, max_file_bytes=256000, error_cls=ValueError, budget=None):
     """Validate org-context.manifest.json and observe referenced local paths safely."""
     try:
         doc = json.loads(text)
@@ -135,7 +149,7 @@ def parse_capability_manifest(root, text, *, max_file_bytes=256000, error_cls=Va
                 raise error_cls('entrypoint must be an object with path and optional symbol')
             rel_path = _validate_relpath(ep['path'], 'entrypoint.path', error_cls)
             path_status, file_sha = _observe_local_path(
-                root, rel_path, 'entrypoint.path', max_file_bytes=max_file_bytes, error_cls=error_cls
+                root, rel_path, 'entrypoint.path', max_file_bytes=max_file_bytes, error_cls=error_cls, budget=budget
             )
             symbol = None
             symbol_status = None
@@ -157,7 +171,7 @@ def parse_capability_manifest(root, text, *, max_file_bytes=256000, error_cls=Va
         for ref_raw in raw_refs:
             rel_path = _validate_relpath(ref_raw, 'reference path', error_cls)
             path_status, file_sha = _observe_local_path(
-                root, rel_path, 'reference path', max_file_bytes=max_file_bytes, error_cls=error_cls
+                root, rel_path, 'reference path', max_file_bytes=max_file_bytes, error_cls=error_cls, budget=budget
             )
             references.append({
                 'path': rel_path,

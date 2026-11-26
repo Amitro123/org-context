@@ -62,12 +62,15 @@ class ExtractorTests(unittest.TestCase):
               '        run: >-\n          npm i folded\n      - uses: x/y@v1\n        with:\n          run: pip install inner\n'
               '    defaults:\n      run:\n        shell: bash\n')
         rows,_=extract(text)
-        self.assertEqual(names(rows),[('python','a',''),('python','b','==2'),('python','z',''),('npm','folded',''),('python','inner','')])
+        # `run: ...` inside shell text and `with.run` are data, not step commands
+        self.assertEqual(names(rows),[('python','a',''),('python','b','==2'),('npm','folded','')])
 
     def test_flavor_keys(self):
         text='steps:\n- script: pip install a\n- bash: npm i b\n- pwsh: pip install c\n- run: pip install d\n'
         self.assertEqual([r[1] for r in extract(text,'azure')[0]],['a','b','c'])
-        self.assertEqual([r[1] for r in extract(text,'github')[0]],['d'])
+        self.assertEqual(extract(text,'github')[0],[])  # GitHub steps live under jobs.<id>.steps
+        self.assertEqual([r[1] for r in extract(steps('pip install d'),'github')[0]],['d'])
+        self.assertEqual(extract(steps('pip install d'),'azure')[0],[])
 
     def test_limits(self):
         rows,notes=extract(steps(*('pip install p%d'%i for i in range(60))))
@@ -156,7 +159,7 @@ class ScanTests(ScanCase):
         self.write(GH,'jobs:\n  t:\n    steps:\n      - run: |\n          echo hi\n          pip install a \\\n            b==2\n          run: pip install z\n      - name: pip install notshell\n')
         cli.scan(self.db,self.repo)
         got=sorted((r[0],r[1]) for r in self.db.execute('SELECT name,specification FROM dependencies'))
-        self.assertEqual(got,[('a',''),('b','==2'),('z','')])
+        self.assertEqual(got,[('a',''),('b','==2')])
 
     def test_nothing_is_executed(self):
         marker=self.repo/'MARKER'
@@ -192,6 +195,61 @@ defaults:
   run:
     shell: bash
 """
+
+class StructureTests(ScanCase):
+    """R9/R10: only step command fields count, and folded scalars keep their meaning."""
+    GH_ENV='name: no-install\non: push\nenv:\n  run: pip install ghost-package\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n    - run: echo ok\n'
+    AZ_PARAM='parameters:\n- name: data\n  type: object\n  default:\n    script: pip install ghost-package\nsteps:\n- script: echo ok\n'
+
+    def test_environment_and_parameter_data_are_not_commands(self):
+        self.write(GH,self.GH_ENV);self.write('azure-pipelines.yml',self.AZ_PARAM)
+        cli.scan(self.db,self.repo)
+        self.assertEqual(self.find('ghost-package'),[])
+
+    def test_non_step_contexts_are_excluded(self):
+        for text in (
+            'jobs:\n  t:\n    steps:\n    - uses: x/y@v1\n      with:\n        run: pip install ghost\n',
+            'jobs:\n  t:\n    env:\n      run: pip install ghost\n    steps:\n    - run: echo\n',
+            'jobs:\n  t:\n    outputs:\n      steps:\n      - run: pip install ghost\n',
+            'defaults:\n  run:\n    shell: pip install ghost\n',
+            'jobs:\n  t:\n    steps:\n    - run: |\n        run: pip install ghost\n',
+            'notes:\n  steps:\n  - run: pip install ghost\n',
+        ):
+            self.assertEqual(extract(text)[0],[],text)
+        for text in (
+            'variables:\n  steps:\n  - script: pip install ghost\n',
+            'parameters:\n- name: p\n  default:\n    steps:\n    - script: pip install ghost\n',
+            'steps:\n- task: X@1\n  inputs:\n    script: pip install ghost\n',
+        ):
+            self.assertEqual(extract(text,'azure')[0],[],text)
+
+    def test_positive_controls(self):
+        self.write(GH,steps('pip install pytest'))
+        self.write('azure-pipelines.yml','stages:\n- stage: s\n  jobs:\n  - job: j\n    steps:\n    - script: pip install pytest\n    - bash: npm i azpkg\n')
+        cli.scan(self.db,self.repo)
+        self.assertEqual(sorted(r['scope'] for r in self.find('pytest')),['ci-install:'+GH,'ci-install:azure-pipelines.yml'])
+        self.assertEqual(len(self.find('azpkg')),1)
+
+    def test_folded_scalar_end_to_end(self):
+        for header in ('>','>-','>+'):
+            self.write(GH,'jobs:\n  test:\n    steps:\n    - run: %s\n        pip install\n        pytest\n'%header)
+            cli.scan(self.db,self.repo)
+            self.assertEqual([(r['name'],r['scope']) for r in self.find('pytest')],[('pytest','ci-install:'+GH)],header)
+
+    def test_literal_scalar_keeps_newlines(self):
+        self.write(GH,'jobs:\n  test:\n    steps:\n    - run: |\n        pip install\n        pytest\n')
+        cli.scan(self.db,self.repo)
+        self.assertEqual(self.find('pytest'),[])
+
+    def test_folded_blank_and_indented_lines(self):
+        text='jobs:\n  t:\n    steps:\n    - run: >-\n        pip install a\n        b\n\n        npm i c\n          pip install d\n        e\n'
+        # "pip install a b" / "npm i c" / "  pip install d" / "e" (blank and more-indented lines keep their breaks)
+        self.assertEqual(names(extract(text)[0]),[('python','a',''),('python','b',''),('npm','c',''),('python','d','')])
+
+    def test_plain_multiline_and_quoted_values(self):
+        self.assertEqual(names(extract('jobs:\n  t:\n    steps:\n    - run: pip install\n        pytest\n')[0]),[('python','pytest','')])
+        rows,notes=extract('jobs:\n  t:\n    steps:\n    - run: "pip install\n        pytest"\n')
+        self.assertEqual(rows,[]);self.assertEqual(notes['ci_install_unsupported'],1)
 
 class AzureTests(ScanCase):
     def test_azure_steps_and_pipeline_metadata_unchanged(self):

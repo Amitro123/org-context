@@ -26,7 +26,6 @@ def normalize(name):
 
 
 _KEYS = {'github': ('run',), 'azure': ('script', 'bash', 'pwsh')}
-_KEY_LINE = re.compile(r'^(\s*)(-[ \t]+)?(run|script|bash|pwsh):(?:[ \t]+(.*))?$')
 _COMMAND_WORD = re.compile(r'\b(?:pip3?|pipx|uv|npm|npx)\b')
 _ENV_ASSIGN = re.compile(r'[A-Za-z_][A-Za-z0-9_]*=')
 _SHELL_COMMENT = re.compile(r'\s#.*$')
@@ -78,32 +77,117 @@ def _indent(line):
     return len(line) - len(line.lstrip())
 
 
-def _script_bodies(text, keys):
-    """Yield lists of shell lines: one per inline value, or a block scalar body."""
+_KEY = re.compile(r"""(?:([A-Za-z_][\w.-]*)|"([^"]*)"|'([^']*)')[ \t]*:(?:[ \t]+(.*)|[ \t]*)$""")
+# Ancestors that may lead to a step list in a pipeline (the same shape workflow_refs trusts).
+_AZURE_ANCESTORS = frozenset([
+    'stages', 'jobs', 'strategy', 'runOnce', 'rolling', 'canary', 'preDeploy', 'deploy',
+    'routeTraffic', 'postRouteTraffic', 'on', 'success', 'failure',
+])
+
+
+def _parse_line(line):
+    """Return (dash columns, key, key column, value or None) for one YAML line, else None."""
+    col = len(line) - len(line.lstrip(' '))
+    rest = line[col:]
+    dashes = []
+    while rest[:1] == '-' and (len(rest) == 1 or rest[1] in ' \t'):
+        dashes.append(col)
+        inner = rest[1:]
+        stripped = inner.lstrip(' \t')
+        col += 1 + len(inner) - len(stripped)
+        rest = stripped
+    m = _KEY.match(rest)
+    if not m:
+        return dashes, None, col, None
+    key = next(g for g in m.groups()[:3] if g is not None)
+    return dashes, key, col, m[4]
+
+
+def _is_step_field(tokens, flavor):
+    """True when the key at the end of `tokens` is a command field of a step mapping.
+
+    Only `jobs.<id>.steps[].run` (GitHub) and `steps[].script|bash|pwsh` below the known pipeline
+    ancestors (Azure) count. env, with, parameters and every unknown structure are data.
+    """
+    if len(tokens) < 3 or tokens[-2] != 'I' or tokens[-3] != 'K:steps':
+        return False
+    field = tokens[-1][2:]
+    if flavor == 'github':
+        return field == 'run' and len(tokens) == 5 and tokens[0] == 'K:jobs'
+    prefix = tokens[:-3]
+    return field in _KEYS['azure'] and all(
+        t == 'I' or (t.startswith('K:') and t[2:] in _AZURE_ANCESTORS) for t in prefix)
+
+
+def _fold(lines):
+    """Apply YAML folding to the lines of a `>` block scalar (blank and more-indented lines keep breaks)."""
+    base = next((_indent(x) for x in lines if x.strip()), 0)
+    out, current = [], None
+    for raw in lines:
+        if not raw.strip():
+            if current is not None:
+                out.append(current)
+                current = None
+        elif _indent(raw) > base:
+            if current is not None:
+                out.append(current)
+                current = None
+            out.append(raw.strip())
+        else:
+            current = raw.strip() if current is None else current + ' ' + raw.strip()
+    if current is not None:
+        out.append(current)
+    return out
+
+
+def _script_bodies(text, flavor, notes):
+    """Yield lists of shell lines for each step command field, tracking the YAML context."""
     lines = text.splitlines()
+    stack = []  # (column, token): 'I' for a sequence item, 'K:<key>' for a mapping key
     i = 0
     while i < len(lines):
-        m = _KEY_LINE.match(lines[i])
+        line = lines[i]
         i += 1
-        if not m or m[3] not in keys:
+        if not line.strip() or line.lstrip().startswith('#'):
             continue
-        key_col = len(m[1]) + len(m[2] or '')
-        value = _scalar(m[4] or '')
-        if not value:
+        dashes, key, kcol, value = _parse_line(line)
+        for d in dashes:
+            while stack and (stack[-1][0] > d or (stack[-1][0] == d and stack[-1][1] == 'I')):
+                stack.pop()
+            stack.append((d, 'I'))
+        if key is None:
             continue
-        if _BLOCK_SCALAR.fullmatch(value):
+        while stack and stack[-1][0] >= kcol:
+            stack.pop()
+        tokens = [t for _, t in stack] + ['K:' + key]
+        stack.append((kcol, 'K:' + key))
+        scalar = _scalar(value or '')
+        if _BLOCK_SCALAR.fullmatch(scalar):
             body = []
             while i < len(lines):
-                line = lines[i]
-                if line.strip() and _indent(line) <= key_col:
+                nxt = lines[i]
+                if nxt.strip() and _indent(nxt) <= kcol:
                     break
-                body.append(line.strip())
+                body.append(nxt)
                 i += 1
-            yield body
+            if _is_step_field(tokens, flavor):
+                yield _fold(body) if scalar[0] == '>' else [x.strip() for x in body]
             continue
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
-            value = value[1:-1]
-        yield [value]
+        if not _is_step_field(tokens, flavor) or not scalar:
+            continue
+        if scalar[0] in '"\'':
+            if len(scalar) < 2 or scalar[-1] != scalar[0]:
+                if _COMMAND_WORD.search(scalar):
+                    notes['ci_install_unsupported'] += 1
+                continue
+            scalar = scalar[1:-1]
+        else:
+            parts = [scalar]
+            while i < len(lines) and lines[i].strip() and _indent(lines[i]) > kcol and len(parts) < MAX_CONTINUATION:
+                parts.append(lines[i].strip())
+                i += 1
+            scalar = ' '.join(parts)
+        yield [scalar]
 
 
 def _logical_lines(body):
@@ -207,15 +291,9 @@ def _classify(token, eco, notes):
     return name, spec
 
 
-def _segment_packages(segment, notes, labels=()):
-    """Yield (ecosystem, name, spec) for one shell segment.
-
-    `labels` are the flavor's step keys with a colon (`run:`): a block body line such as
-    `run: pip install z` is shell text, not a new step, and its leading label is skipped.
-    """
+def _segment_packages(segment, notes):
+    """Yield (ecosystem, name, spec) for one shell segment."""
     tokens, unbalanced = _tokens(segment)
-    if tokens and tokens[0] in labels:
-        tokens = tokens[1:]
     while tokens and (tokens[0] == 'sudo' or _ENV_ASSIGN.match(tokens[0])):
         was_sudo = tokens[0] == 'sudo'
         tokens = tokens[1:]
@@ -268,10 +346,8 @@ def _segment_packages(segment, notes, labels=()):
 
 def ci_install_declarations(text, flavor, scope, notes):
     """Return (ecosystem, name, specification, scope) rows for static CI installs."""
-    keys = _KEYS.get(flavor, ())
-    labels = tuple(k + ':' for k in keys)
     result, distinct = [], set()
-    for body in _script_bodies(text, keys):
+    for body in _script_bodies(text, flavor, notes):
         for line in _logical_lines(body):
             if len(line) > MAX_LINE:
                 if _COMMAND_WORD.search(line):
@@ -280,7 +356,7 @@ def ci_install_declarations(text, flavor, scope, notes):
             # A `${{ ... }}` expression is one opaque dynamic token, never split or read.
             line = _EXPRESSION.sub('${{}}', line)
             for segment in _segments(line):
-                for eco, name, spec in _segment_packages(segment, notes, labels):
+                for eco, name, spec in _segment_packages(segment, notes):
                     row = (eco, name, spec, scope)
                     if row not in distinct and len(distinct) >= MAX_CI_INSTALLS:
                         notes['ci_install_over_limit'] += 1
