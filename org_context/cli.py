@@ -189,20 +189,26 @@ def scan(db,supplied):
             candidates.append(p)
             if len(candidates)>MAX_FILES: raise ValueError('File discovery limit exceeded; narrow scan root')
     candidates=sorted(set(candidates),key=str)
-    total=0
+    # One read/accounting mechanism for the main scan and manifest references: a file is read
+    # once per scan and its bytes are charged once, whichever side reaches it first.
+    budget={'used':0,'limit':SCAN_TOTAL_BYTES,'seen':{},'reads':{},'charged':set()}
     for source in candidates:
         name=source.relative_to(root).as_posix()
         if not safe(root,source):
             skipped.append({'path':name,'reason':'symlink'}); continue
         if not source.is_file(): missing.append(name); continue
         try:
-            with source.open('rb') as f: raw=f.read(MAX_BYTES+1)
+            raw=budget['reads'].get(name)
+            if raw is None:
+                with source.open('rb') as f: raw=f.read(MAX_BYTES+1)
+                budget['reads'][name]=raw
             if len(raw)>MAX_BYTES:
                 # An oversized manifest must not silently replace the stored capabilities with nothing.
                 if name==MANIFEST_FILENAME: raise SourceFormatError('manifest exceeds the size limit')
                 skipped.append({'path':name,'reason':'size_limit'}); continue
-            total+=len(raw)
-            if total>SCAN_TOTAL_BYTES: raise ValueError('Total scan size exceeded')
+            if name not in budget['charged']:
+                budget['charged'].add(name); budget['used']+=len(raw)
+            if budget['used']>SCAN_TOTAL_BYTES: raise ValueError('Total scan size exceeded')
             text=raw.decode('utf-8'); extracted,notes,found=parse_with_notes(name,text)
             sha=hashlib.sha256(raw).hexdigest(); eid=digest(pid+':'+name+':'+sha)
             content=None; kind='manifest'; method='structured_parser'
@@ -222,9 +228,7 @@ def scan(db,supplied):
                 kind='workflow'; method='bounded_lexical_extraction'
                 workflow_refs[name]=pipeline_metadata(text)
             elif name==MANIFEST_FILENAME:
-                budget={'used':total,'limit':SCAN_TOTAL_BYTES,'seen':{}}
                 caps.extend((pid,*c,eid) for c in parse_capability_manifest(root,text,max_file_bytes=MAX_BYTES,error_cls=SourceFormatError,budget=budget))
-                total=budget['used']
                 content=None; kind='capability_manifest'; method='structured_parser'
             elif name.endswith('CODEOWNERS') or name=='CLAUDE.md' or name.startswith('README'):
                 content=text; kind='unverified_document'; method='reference_text'
