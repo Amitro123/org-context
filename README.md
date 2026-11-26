@@ -166,7 +166,7 @@ Trusted local single-user use only. No Azure/DevOps connectors, LLM, Serena,
 cloud actions, shell tools or agent repair automation. The fixed git rev-parse
 command reads local metadata; scanned application code is never executed.
 Root/descendant symlinks are rejected or skipped. Per-file limit: 256 KB;
-aggregate: 2 MB; bounded discovery: 128 candidates. Oversized files are reported;
+aggregate: 2 MB (manifest-referenced files count too); bounded discovery: 128 candidates. Oversized files are reported (an oversized capability manifest fails the root scan instead);
 parse errors preserve that root's old snapshot. Multi-root scans commit per root.
 
 This is NOT a secret scanner or a sandbox against concurrent malicious file

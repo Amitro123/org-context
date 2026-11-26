@@ -27,11 +27,17 @@ and Azure Pipelines `script:`, `bash:` and `pwsh:` values in the files above.
 Nothing is executed, and shell or YAML is never evaluated (no variable
 expansion, conditions or matrix).
 
-- **Locating shell text:** a key line `run:` (or `- run:`); an inline value is one
-  shell line (one level of quotes removed); a block scalar (`|`, `>`, with
-  modifiers) body is every following line indented deeper than the key, read line
-  by line. A `run:` line inside a block body is shell text, not a new step. An
-  empty value (e.g. `defaults: run: shell: bash`) is not a script.
+- **Locating shell text:** only the command field of a real step counts:
+  `jobs.<id>.steps[].run` for GitHub, and `steps[].script` / `bash` / `pwsh` below
+  the known pipeline ancestors (`stages`, `jobs`, `strategy`, `deploy`, ...) for
+  Azure. `env`, `with`, `inputs`, `parameters`, `variables`, `defaults` and any
+  other structure are data and never read; unknown structures do not inherit a
+  step context. An inline value is one shell line (one level of quotes removed;
+  an unclosed quote is `ci_install_unsupported`); a plain multi-line value is
+  joined with spaces. In a literal block (`|`) every line is its own shell line.
+  In a folded block (`>`, `>-`, `>+`) lines are joined with a space, and blank and
+  more-indented lines keep their breaks, as YAML defines. A `run:` line inside a
+  block body is shell text, not a new step.
 - **Shell lines:** comments dropped, `\` continuations joined (up to 20 lines),
   split on `&&`, `||`, `;`, `|`; leading `sudo` and `NAME=value` dropped.
 - **Recognized commands:** `pip install`, `pip3 install`, `python -m pip install`,

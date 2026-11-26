@@ -67,8 +67,9 @@ Synthetic example (placeholders only):
 - `component` (`1..128` chars), `role` (`1..64` chars), `capabilities` (`1..32` items, unique lowercase slug `id`).
 - Per capability: `summary` (`1..240`), `responsibility` (`1..400`), `entrypoints` (`1..20`), `references` (`0..20`), `out_of_scope` (`0..10`, each `1..200`).
 - All `path` values must be relative POSIX paths inside the scan root; absolute paths, `..`, backslashes, and symlinks escaping the root are rejected.
-- Any invalid manifest fails that root scan cleanly with a content-free error and preserves the previous snapshot.
-- Referenced local files are checked strictly within the scan root for existence and optional SHA256 (when `<= 256 KB`), producing `observed_local_file`, `observed_local_file_over_size_limit`, `missing_file`, or `not_a_file`. Referenced file bodies are **never** stored or returned.
+- Any invalid manifest fails that root scan cleanly with a content-free error and preserves the previous snapshot. A manifest over 256 KB is invalid in the same way (it is never skipped, so it cannot silently replace the stored capabilities with nothing). Removing the manifest file clears the root's capabilities.
+- Paths keep their exact identity: a path with leading or trailing whitespace is rejected, never trimmed to a different file. Display text (`summary`, `responsibility`) is still trimmed.
+- Referenced local files are checked strictly within the scan root for existence and optional SHA256 (when `<= 256 KB`), producing `observed_local_file`, `observed_local_file_over_size_limit`, `missing_file`, or `not_a_file`. Referenced file bodies are **never** stored or returned. Each referenced file is read at most once per scan, and the bytes read count against the same 2 MB scan aggregate as the main scan; exceeding it fails the root scan and preserves the previous snapshot.
 - Declared `symbol` values always report `symbol_status: "declared_only_not_resolved"`.
 
 ### Second source: Claude Code skill and agent frontmatter

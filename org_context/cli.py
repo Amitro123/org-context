@@ -20,6 +20,7 @@ PATTERNS=('requirements-*.txt','.github/workflows/*.yml','.github/workflows/*.ya
 UNSUPPORTED=('lockfiles','nested package discovery','workspace member discovery','full YAML semantics','CODEOWNERS matching semantics','OpenAPI/IaC analysis','requirements include expansion','environment-marker evaluation','dependency-group include expansion','CI script execution and indirect installs')
 MAX_BYTES=256000
 MAX_FILES=128
+SCAN_TOTAL_BYTES=2_000_000
 
 class SourceFormatError(ValueError):
     """Safe, content-free error raised for malformed source declarations."""
@@ -197,9 +198,11 @@ def scan(db,supplied):
         try:
             with source.open('rb') as f: raw=f.read(MAX_BYTES+1)
             if len(raw)>MAX_BYTES:
+                # An oversized manifest must not silently replace the stored capabilities with nothing.
+                if name==MANIFEST_FILENAME: raise SourceFormatError('manifest exceeds the size limit')
                 skipped.append({'path':name,'reason':'size_limit'}); continue
             total+=len(raw)
-            if total>2_000_000: raise ValueError('Total scan size exceeded')
+            if total>SCAN_TOTAL_BYTES: raise ValueError('Total scan size exceeded')
             text=raw.decode('utf-8'); extracted,notes,found=parse_with_notes(name,text)
             sha=hashlib.sha256(raw).hexdigest(); eid=digest(pid+':'+name+':'+sha)
             content=None; kind='manifest'; method='structured_parser'
@@ -219,7 +222,9 @@ def scan(db,supplied):
                 kind='workflow'; method='bounded_lexical_extraction'
                 workflow_refs[name]=pipeline_metadata(text)
             elif name==MANIFEST_FILENAME:
-                caps.extend((pid,*c,eid) for c in parse_capability_manifest(root,text,max_file_bytes=MAX_BYTES,error_cls=SourceFormatError))
+                budget={'used':total,'limit':SCAN_TOTAL_BYTES,'seen':{}}
+                caps.extend((pid,*c,eid) for c in parse_capability_manifest(root,text,max_file_bytes=MAX_BYTES,error_cls=SourceFormatError,budget=budget))
+                total=budget['used']
                 content=None; kind='capability_manifest'; method='structured_parser'
             elif name.endswith('CODEOWNERS') or name=='CLAUDE.md' or name.startswith('README'):
                 content=text; kind='unverified_document'; method='reference_text'
