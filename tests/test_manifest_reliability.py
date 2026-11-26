@@ -157,7 +157,7 @@ class SharedReadTests(Base):  # R7 follow-up: one read per file per scan, shared
         real_open, opens = Path.open, {}
 
         def spy(self_, *a, **k):
-            if self.repo in self_.parents:
+            if self.repo.resolve() in Path(os.path.realpath(self_)).parents:
                 opens[self_.name] = opens.get(self_.name, 0) + 1
             return real_open(self_, *a, **k)
         patcher = mock.patch.object(Path, 'open', spy)
