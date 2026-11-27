@@ -251,6 +251,74 @@ class StructureTests(ScanCase):
         rows,notes=extract('jobs:\n  t:\n    steps:\n    - run: "pip install\n        pytest"\n')
         self.assertEqual(rows,[]);self.assertEqual(notes['ci_install_unsupported'],1)
 
+class FollowupTests(ScanCase):
+    """Round 8: multi-line quoted data is opaque, and explicit indentation indicators are honored."""
+    QUOTED = ('name: example\non: push\njobs:\n  real:\n    runs-on: ubuntu-latest\n    steps:\n'
+              '    - name: %s\n      run: pip install phantom\n      end%s\n      run: echo ok\n')
+
+    def scan_find(self,text,name,path=GH):
+        self.write(path,text);cli.scan(self.db,self.repo)
+        return self.find(name)
+
+    def test_quoted_multiline_name_is_opaque(self):
+        for q in ('"','\''):
+            text=self.QUOTED%(q+'An example',q)
+            self.assertEqual(self.scan_find(text,'phantom'),[],q)
+
+    def test_real_command_after_a_quoted_name_is_found(self):
+        text=('jobs:\n  t:\n    steps:\n    - name: "An example\n      run: pip install phantom\n      end"\n      run: pip install real-package\n')
+        self.assertEqual(self.scan_find(text,'phantom'),[])
+        self.assertEqual(len(self.find('real-package')),1)
+
+    def test_quote_escapes_and_lookalike_keys(self):
+        for text in (
+            'jobs:\n  t:\n    steps:\n    - name: "a \\" b\n      run: pip install ghost\n      c"\n      run: echo\n',
+            "jobs:\n  t:\n    steps:\n    - name: 'it''s\n      run: pip install ghost\n      x'\n      run: echo\n",
+            'jobs:\n  t:\n    env:\n      A: "x\n        run: pip install ghost\n        y"\n    steps:\n    - run: echo\n',
+            'jobs:\n  t:\n    steps:\n    - uses: a/b@v1\n      with:\n        x: "one\n        run: pip install ghost\n        two"\n',
+            'jobs:\n  t:\n    steps:\n    - name: {a: "x\n      run: pip install ghost\n      y"}\n      run: echo\n',
+            'jobs:\n  t:\n    steps:\n    - name: [a,\n      b]\n      with: {k: v,\n      run: pip install ghost}\n',
+        ):
+            self.assertEqual(extract(text)[0],[],text)
+
+    def test_quoted_multiline_command_is_reported_unsupported(self):
+        rows,notes=extract('jobs:\n  t:\n    steps:\n    - run: "pip install\n        ghost"\n    - run: pip install real\n')
+        self.assertEqual(names(rows),[('python','real','')]);self.assertEqual(notes['ci_install_unsupported'],1)
+
+    def test_scalar_sequence_items_are_opaque(self):
+        text='jobs:\n  t:\n    steps:\n    - run: echo\n    x:\n    - "a\n      run: pip install ghost"\n    - |\n      run: pip install ghost\n'
+        self.assertEqual(extract(text)[0],[])
+
+    def test_explicit_indentation_indicator_end_to_end(self):
+        text='name: example\non: push\njobs:\n  real:\n    runs-on: ubuntu-latest\n    steps:\n    - run: >2\n          pip install real\n          phantom\n'
+        self.assertEqual(self.scan_find(text,'phantom'),[])
+        self.assertEqual(len(self.find('real')),1)
+
+    def test_indicator_variants(self):
+        body='          pip install real\n          phantom\n'
+        for header in ('>2','>2-','>-2','>+2','>2+'):
+            text='jobs:\n  t:\n    steps:\n    - run: %s\n%s'%(header,body)
+            self.assertEqual(names(extract(text)[0]),[('python','real','')],header)
+        # an indicator that matches the content indentation folds as usual
+        text='jobs:\n  t:\n    steps:\n    - run: >4\n        pip install\n        pytest\n'
+        self.assertEqual(names(extract(text)[0]),[('python','pytest','')])
+        # first-line extra indentation and blank lines
+        text='jobs:\n  t:\n    steps:\n    - run: >2\n\n          pip install a\n\n          npm i b\n'
+        self.assertEqual(names(extract(text)[0]),[('python','a',''),('npm','b','')])
+        text='jobs:\n  t:\n    steps:\n    - run: >-2\n        pip install a\n          b\n        c\n'
+        self.assertEqual(names(extract(text)[0]),[('python','a','')])
+
+    def test_literal_with_indicator_keeps_newlines(self):
+        text='jobs:\n  t:\n    steps:\n    - run: |2\n          pip install real\n          phantom\n'
+        self.assertEqual(names(extract(text)[0]),[('python','real','')])
+
+    def test_simple_forms_are_unchanged(self):
+        for header in ('>','>-','>+'):
+            text='jobs:\n  t:\n    steps:\n    - run: %s\n        pip install\n        pytest\n'%header
+            self.assertEqual(names(extract(text)[0]),[('python','pytest','')],header)
+        text='jobs:\n  t:\n    steps:\n    - run: |\n        pip install\n        pytest\n'
+        self.assertEqual(extract(text)[0],[])
+
 class AzureTests(ScanCase):
     def test_azure_steps_and_pipeline_metadata_unchanged(self):
         self.write('azure-pipelines.yml',AZURE)

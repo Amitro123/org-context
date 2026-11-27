@@ -86,7 +86,7 @@ _AZURE_ANCESTORS = frozenset([
 
 
 def _parse_line(line):
-    """Return (dash columns, key, key column, value or None) for one YAML line, else None."""
+    """Return (dash columns, key, key column, value or None, text after the dashes) for one line."""
     col = len(line) - len(line.lstrip(' '))
     rest = line[col:]
     dashes = []
@@ -98,9 +98,9 @@ def _parse_line(line):
         rest = stripped
     m = _KEY.match(rest)
     if not m:
-        return dashes, None, col, None
+        return dashes, None, col, None, rest
     key = next(g for g in m.groups()[:3] if g is not None)
-    return dashes, key, col, m[4]
+    return dashes, key, col, m[4], rest
 
 
 def _is_step_field(tokens, flavor):
@@ -119,9 +119,14 @@ def _is_step_field(tokens, flavor):
         t == 'I' or (t.startswith('K:') and t[2:] in _AZURE_ANCESTORS) for t in prefix)
 
 
-def _fold(lines):
-    """Apply YAML folding to the lines of a `>` block scalar (blank and more-indented lines keep breaks)."""
-    base = next((_indent(x) for x in lines if x.strip()), 0)
+def _fold(lines, base=None):
+    """Apply YAML folding to the lines of a `>` block scalar (blank and more-indented lines keep breaks).
+
+    `base` is the content indentation from an explicit indicator (`>2`); without one it is the
+    indentation of the first non-blank line.
+    """
+    if base is None:
+        base = next((_indent(x) for x in lines if x.strip()), 0)
     out, current = [], None
     for raw in lines:
         if not raw.strip():
@@ -140,6 +145,67 @@ def _fold(lines):
     return out
 
 
+_MAX_OPAQUE_LINES = 500
+
+
+def _opaque_end(first, lines, i):
+    """Consume a quoted scalar or flow collection that starts with `first`.
+
+    Returns the index of the first line after it and whether it spanned further lines. Its text is
+    opaque data: nothing inside is read as YAML structure. An unterminated one swallows at most
+    _MAX_OPAQUE_LINES lines (invalid YAML), which can only hide declarations, never invent them.
+    """
+    quote, depth = None, 0
+    text, start = first, i
+    while True:
+        j = 0
+        while j < len(text):
+            ch = text[j]
+            if quote == '"':
+                if ch == '\\':
+                    j += 1
+                elif ch == '"':
+                    quote = None
+            elif quote == "'":
+                if ch == "'":
+                    if text[j + 1:j + 2] == "'":
+                        j += 1
+                    else:
+                        quote = None
+            elif ch in '"\'':
+                quote = ch
+            elif ch in '[{':
+                depth += 1
+            elif ch in ']}':
+                depth -= 1
+            elif ch == '#' and (j == 0 or text[j - 1] in ' \t'):
+                break
+            j += 1
+        if (quote is None and depth <= 0) or i >= len(lines) or i - start >= _MAX_OPAQUE_LINES:
+            return i, i != start
+        text = lines[i]
+        i += 1
+
+
+def _consume_block(lines, i, parent_col):
+    """Return the raw lines of a block scalar body and the index after it."""
+    body = []
+    while i < len(lines):
+        nxt = lines[i]
+        if nxt.strip() and _indent(nxt) <= parent_col:
+            break
+        body.append(nxt)
+        i += 1
+    return body, i
+
+
+def _block_lines(header, body, parent_col):
+    digit = re.search(r'[1-9]', header)
+    if header[0] == '>':
+        return _fold(body, parent_col + int(digit.group())) if digit else _fold(body)
+    return [x.strip() for x in body]
+
+
 def _script_bodies(text, flavor, notes):
     """Yield lists of shell lines for each step command field, tracking the YAML context."""
     lines = text.splitlines()
@@ -150,44 +216,51 @@ def _script_bodies(text, flavor, notes):
         i += 1
         if not line.strip() or line.lstrip().startswith('#'):
             continue
-        dashes, key, kcol, value = _parse_line(line)
+        dashes, key, kcol, value, rest = _parse_line(line)
         for d in dashes:
             while stack and (stack[-1][0] > d or (stack[-1][0] == d and stack[-1][1] == 'I')):
                 stack.pop()
             stack.append((d, 'I'))
         if key is None:
+            # A scalar sequence item: consume it whole so its text is never read as structure.
+            if dashes:
+                item = _scalar(rest)
+                if _BLOCK_SCALAR.fullmatch(item):
+                    _, i = _consume_block(lines, i, dashes[-1])
+                elif item[:1] in ('"', "'", '[', '{'):
+                    i, _ = _opaque_end(rest.strip(), lines, i)
             continue
         while stack and stack[-1][0] >= kcol:
             stack.pop()
         tokens = [t for _, t in stack] + ['K:' + key]
         stack.append((kcol, 'K:' + key))
+        target = _is_step_field(tokens, flavor)
         scalar = _scalar(value or '')
         if _BLOCK_SCALAR.fullmatch(scalar):
-            body = []
-            while i < len(lines):
-                nxt = lines[i]
-                if nxt.strip() and _indent(nxt) <= kcol:
-                    break
-                body.append(nxt)
-                i += 1
-            if _is_step_field(tokens, flavor):
-                yield _fold(body) if scalar[0] == '>' else [x.strip() for x in body]
+            body, i = _consume_block(lines, i, kcol)
+            if target:
+                yield _block_lines(scalar, body, kcol)
             continue
-        if not _is_step_field(tokens, flavor) or not scalar:
+        if not scalar:
             continue
-        if scalar[0] in '"\'':
-            if len(scalar) < 2 or scalar[-1] != scalar[0]:
-                if _COMMAND_WORD.search(scalar):
+        if scalar[0] in '"\'[{':
+            end, multiline = _opaque_end(scalar, lines, i)
+            if multiline:
+                # The whole scalar is data (or an unsupported command scalar): never re-parsed.
+                if target and _COMMAND_WORD.search(' '.join(lines[i - 1:end])):
                     notes['ci_install_unsupported'] += 1
+                i = end
                 continue
-            scalar = scalar[1:-1]
-        else:
-            parts = [scalar]
-            while i < len(lines) and lines[i].strip() and _indent(lines[i]) > kcol and len(parts) < MAX_CONTINUATION:
-                parts.append(lines[i].strip())
-                i += 1
-            scalar = ' '.join(parts)
-        yield [scalar]
+            if target and scalar[0] in '"\'' and len(scalar) >= 2 and scalar[-1] == scalar[0]:
+                yield [scalar[1:-1]]
+            continue
+        if not target:
+            continue
+        parts = [scalar]
+        while i < len(lines) and lines[i].strip() and _indent(lines[i]) > kcol and len(parts) < MAX_CONTINUATION:
+            parts.append(lines[i].strip())
+            i += 1
+        yield [' '.join(parts)]
 
 
 def _logical_lines(body):

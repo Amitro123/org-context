@@ -37,7 +37,12 @@ expansion, conditions or matrix).
   joined with spaces. In a literal block (`|`) every line is its own shell line.
   In a folded block (`>`, `>-`, `>+`) lines are joined with a space, and blank and
   more-indented lines keep their breaks, as YAML defines. A `run:` line inside a
-  block body is shell text, not a new step.
+  block body is shell text, not a new step. Explicit indentation indicators
+  (`>2`, `|2`, with chomping) are honored, so more-indented lines stay separate
+  lines. In every field, including ones that are never read, multi-line quoted
+  scalars and flow collections (`[...]`, `{...}`) are consumed whole and their
+  text is opaque data: a lookalike `run:` line inside them is never structure. A
+  multi-line quoted command scalar is `ci_install_unsupported`.
 - **Shell lines:** comments dropped, `\` continuations joined (up to 20 lines),
   split on `&&`, `||`, `;`, `|`; leading `sudo` and `NAME=value` dropped.
 - **Recognized commands:** `pip install`, `pip3 install`, `python -m pip install`,

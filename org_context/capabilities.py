@@ -86,13 +86,19 @@ def _observe_local_path(root, rel_path, label, *, max_file_bytes, error_cls, bud
         return 'missing_file', None
     if not target.is_file():
         return 'not_a_file', None
-    # Each referenced file is read once per scan and its bytes count against the scan budget.
+    # A file is read once per scan (shared with the main scanner) and its bytes are charged once.
     seen = budget['seen'] if budget is not None else {}
     if rel_path in seen:
         return seen[rel_path]
-    with target.open('rb') as handle:
-        raw = handle.read(max_file_bytes + 1)
-    if budget is not None:
+    if budget is not None and rel_path in budget['reads']:
+        raw = budget['reads'][rel_path]
+    else:
+        with target.open('rb') as handle:
+            raw = handle.read(max_file_bytes + 1)
+        if budget is not None:
+            budget['reads'][rel_path] = raw
+    if budget is not None and rel_path not in budget['charged']:
+        budget['charged'].add(rel_path)
         budget['used'] += len(raw)
         if budget['used'] > budget['limit']:
             raise error_cls('manifest references exceed the scan size budget')
