@@ -97,7 +97,7 @@ Governance/Security/Eval gate or a production dependency.
   (`--index-url`, `--registry`, ...) are dropped; variables, `${{ }}`, URLs,
   local paths, `-r`/`-c` requirement files and unparsed arguments are counted
   in `omitted_declarations` as `ci_install_dynamic`, `ci_install_local_or_url`,
-  `ci_install_requirements_file`, `ci_install_unsupported` and (beyond 50 rows
+  `ci_install_requirements_file`, `ci_install_unterminated_scalar`, `ci_install_unsupported` (including flow-style `steps:`) and (beyond 50 rows
   per file, or lines over 4096 characters) `ci_install_over_limit` /
   `ci_install_unsupported`, never stored. Scripts, `make`/`tox`/`pre-commit`,
   Dockerfiles, `-r` files and other package managers are not followed.

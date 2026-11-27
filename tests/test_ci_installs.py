@@ -319,6 +319,39 @@ class FollowupTests(ScanCase):
         text='jobs:\n  t:\n    steps:\n    - run: |\n        pip install\n        pytest\n'
         self.assertEqual(extract(text)[0],[])
 
+class HonestCoverageTests(ScanCase):
+    """Forms the extractor cannot read are reported, not silently dropped."""
+
+    def test_flow_style_steps_are_reported_unsupported(self):
+        text='jobs:\n  t:\n    steps: [{run: "pip install a"}, {run: "npm i b"}]\n'
+        rows,notes=extract(text)
+        self.assertEqual(rows,[]);self.assertEqual(notes['ci_install_unsupported'],1)
+        rows,notes=extract('jobs:\n  t:\n    steps:\n    - {run: pip install a}\n')
+        self.assertEqual(rows,[])
+        rows,notes=extract('steps: [{script: pip install a}]\n','azure')
+        self.assertEqual(rows,[]);self.assertEqual(notes['ci_install_unsupported'],1)
+
+    def test_flow_style_data_without_commands_is_not_reported(self):
+        rows,notes=extract('jobs:\n  t:\n    steps: []\n    needs: [a, b]\n')
+        self.assertEqual((rows,sum(notes.values())),([],0))
+
+    def test_unterminated_quote_that_hides_installs_is_reported(self):
+        text='jobs:\n  t:\n    steps:\n    - name: "oops\n      run: pip install hidden\n'
+        rows,notes=extract(text)
+        self.assertEqual(rows,[]);self.assertEqual(notes['ci_install_unterminated_scalar'],1)
+        rows,notes=extract('jobs:\n  t:\n    steps:\n    - name: "oops\n      run: echo hi\n')
+        self.assertEqual(sum(notes.values()),0)
+
+    def test_unterminated_reports_reach_the_scan_coverage(self):
+        self.write(GH,'jobs:\n  t:\n    steps:\n    - name: "oops\n      run: pip install hidden\n')
+        result=cli.scan(self.db,self.repo)
+        self.assertEqual(self.omitted(result,GH),{'ci_install_unterminated_scalar':1})
+        self.assertEqual(self.find('hidden'),[])
+
+    def test_keys_with_spaces_keep_the_structure_intact(self):
+        text='jobs:\n  t:\n    steps:\n    - name: x\n      my key: v\n      run: pip install a\n    - run: echo\n      with:\n        Run Tests: pip install ghost\n        run: pip install ghost2\n'
+        self.assertEqual(names(extract(text)[0]),[('python','a','')])
+
 class AzureTests(ScanCase):
     def test_azure_steps_and_pipeline_metadata_unchanged(self):
         self.write('azure-pipelines.yml',AZURE)

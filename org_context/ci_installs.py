@@ -77,7 +77,7 @@ def _indent(line):
     return len(line) - len(line.lstrip())
 
 
-_KEY = re.compile(r"""(?:([A-Za-z_][\w.-]*)|"([^"]*)"|'([^']*)')[ \t]*:(?:[ \t]+(.*)|[ \t]*)$""")
+_KEY = re.compile(r"""(?:([A-Za-z_][^:#'"\[\]{},]*?)|"([^"]*)"|'([^']*)')[ \t]*:(?:[ \t]+(.*)|[ \t]*)$""")
 # Ancestors that may lead to a step list in a pipeline (the same shape workflow_refs trusts).
 _AZURE_ANCESTORS = frozenset([
     'stages', 'jobs', 'strategy', 'runOnce', 'rolling', 'canary', 'preDeploy', 'deploy',
@@ -119,6 +119,15 @@ def _is_step_field(tokens, flavor):
         t == 'I' or (t.startswith('K:') and t[2:] in _AZURE_ANCESTORS) for t in prefix)
 
 
+def _is_steps_key(tokens, flavor):
+    """True when the key at the end of `tokens` is a `steps` list in a supported position."""
+    if tokens[-1] != 'K:steps':
+        return False
+    if flavor == 'github':
+        return len(tokens) == 3 and tokens[0] == 'K:jobs'
+    return all(t == 'I' or (t.startswith('K:') and t[2:] in _AZURE_ANCESTORS) for t in tokens[:-1])
+
+
 def _fold(lines, base=None):
     """Apply YAML folding to the lines of a `>` block scalar (blank and more-indented lines keep breaks).
 
@@ -151,9 +160,10 @@ _MAX_OPAQUE_LINES = 500
 def _opaque_end(first, lines, i):
     """Consume a quoted scalar or flow collection that starts with `first`.
 
-    Returns the index of the first line after it and whether it spanned further lines. Its text is
-    opaque data: nothing inside is read as YAML structure. An unterminated one swallows at most
-    _MAX_OPAQUE_LINES lines (invalid YAML), which can only hide declarations, never invent them.
+    Returns the index of the first line after it, whether it spanned further lines and whether it
+    was terminated. Its text is opaque data: nothing inside is read as YAML structure. An
+    unterminated one swallows at most _MAX_OPAQUE_LINES lines (invalid YAML), which can only hide
+    declarations, never invent them; the caller reports it.
     """
     quote, depth = None, 0
     text, start = first, i
@@ -181,8 +191,10 @@ def _opaque_end(first, lines, i):
             elif ch == '#' and (j == 0 or text[j - 1] in ' \t'):
                 break
             j += 1
-        if (quote is None and depth <= 0) or i >= len(lines) or i - start >= _MAX_OPAQUE_LINES:
-            return i, i != start
+        if quote is None and depth <= 0:
+            return i, i != start, True
+        if i >= len(lines) or i - start >= _MAX_OPAQUE_LINES:
+            return i, i != start, False
         text = lines[i]
         i += 1
 
@@ -228,7 +240,10 @@ def _script_bodies(text, flavor, notes):
                 if _BLOCK_SCALAR.fullmatch(item):
                     _, i = _consume_block(lines, i, dashes[-1])
                 elif item[:1] in ('"', "'", '[', '{'):
-                    i, _ = _opaque_end(rest.strip(), lines, i)
+                    start = i - 1
+                    i, _, closed = _opaque_end(rest.strip(), lines, i)
+                    if not closed and _COMMAND_WORD.search(' '.join(lines[start:i])):
+                        notes['ci_install_unterminated_scalar'] += 1
             continue
         while stack and stack[-1][0] >= kcol:
             stack.pop()
@@ -244,7 +259,13 @@ def _script_bodies(text, flavor, notes):
         if not scalar:
             continue
         if scalar[0] in '"\'[{':
-            end, multiline = _opaque_end(scalar, lines, i)
+            end, multiline, closed = _opaque_end(scalar, lines, i)
+            if not closed and _COMMAND_WORD.search(' '.join(lines[i - 1:end])):
+                # unterminated (invalid YAML): the rest was skipped, and it looked like it held installs
+                notes['ci_install_unterminated_scalar'] += 1
+            if _is_steps_key(tokens, flavor) and _COMMAND_WORD.search(' '.join(lines[i - 1:end])):
+                # steps written in flow style are not read; say so instead of reporting nothing
+                notes['ci_install_unsupported'] += 1
             if multiline:
                 # The whole scalar is data (or an unsupported command scalar): never re-parsed.
                 if target and _COMMAND_WORD.search(' '.join(lines[i - 1:end])):

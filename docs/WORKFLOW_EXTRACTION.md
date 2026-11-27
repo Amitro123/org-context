@@ -42,7 +42,13 @@ expansion, conditions or matrix).
   lines. In every field, including ones that are never read, multi-line quoted
   scalars and flow collections (`[...]`, `{...}`) are consumed whole and their
   text is opaque data: a lookalike `run:` line inside them is never structure. A
-  multi-line quoted command scalar is `ci_install_unsupported`.
+  multi-line quoted command scalar is `ci_install_unsupported`. Keys containing
+  spaces are parsed as keys (so they cannot break the structure), and a `steps:`
+  list written in flow style (`steps: [{run: ...}]`) is not read: when it
+  contains an install command it is counted as `ci_install_unsupported`. A quote
+  or bracket that never closes (invalid YAML) skips the rest of its text; when
+  that text looks like install commands it is counted as
+  `ci_install_unterminated_scalar`.
 - **Shell lines:** comments dropped, `\` continuations joined (up to 20 lines),
   split on `&&`, `||`, `;`, `|`; leading `sudo` and `NAME=value` dropped.
 - **Recognized commands:** `pip install`, `pip3 install`, `python -m pip install`,
@@ -58,7 +64,7 @@ expansion, conditions or matrix).
 - **Counted, never stored** (in `omitted_declarations`): `ci_install_dynamic`
   (`$VAR`, `${{ }}`, `%VAR%`, backticks), `ci_install_requirements_file` (`-r`,
   `-c`), `ci_install_local_or_url` (URLs, paths, archives, `-e`, `git+`,
-  `file:`), `ci_install_unsupported` (unparsed arguments, unbalanced quotes,
+  `file:`), `ci_install_unterminated_scalar` (an unclosed quote or bracket hid install-looking text), `ci_install_unsupported` (unparsed arguments, unbalanced quotes, flow-style steps,
   markers, names over 100 or specifiers over 80 characters, logical lines over
   4096 characters) and `ci_install_over_limit` (beyond 50 rows per file).
   Values of known value-taking options (`--index-url`, `--registry`, `--target`,
